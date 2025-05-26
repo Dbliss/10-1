@@ -45,7 +45,7 @@ app.layout = html.Div([
 
     # Bidding message
     html.Div(id='bidding-message', style={'position': 'absolute', 'top': '40px', 'right': '10px', 'font-size': '16px', 'color': 'red'})
-])
+], style={'backgroundColor': 'blue', 'minHeight': '100vh'})
 
 # Dummy placeholder for your game instance
 game = Game()
