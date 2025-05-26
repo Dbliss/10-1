@@ -11,6 +11,11 @@ def index():
 
 @app.route('/start', methods=['POST'])
 def start():
+    data = request.get_json() or {}
+    players = int(data.get('players', 4))
+    rounds = int(data.get('rounds', 10))
+    global game
+    game = Game(num_players=players, num_rounds=rounds)
     game.start_round()
     return jsonify({'status': 'started'})
 
@@ -25,6 +30,8 @@ def bid():
     data = request.get_json()
     bid_value = int(data.get('bid', 0))
     game.receive_bid('You', bid_value)
+    game.manage_turns()
+    game.autoplay_trick()
     return jsonify({'status': 'bid received'})
 
 @app.route('/state')
