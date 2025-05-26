@@ -51,6 +51,10 @@
         await post('/bid', {bid: bid});
     }
 
+    function playCard(card){
+        post('/play', {card: card});
+    }
+
     function renderState(data){
         document.getElementById('round-info').textContent = 'Round: ' + data.round;
         const table = document.getElementById('table');
@@ -91,6 +95,10 @@
                         img.src = c;
                         img.style.width = '40px';
                         img.style.height = '60px';
+                        img.onclick = ()=>{
+                            const id = c.split('/').pop().replace('.png','');
+                            playCard(id);
+                        };
                         cardDiv.appendChild(img);
                     });
                 } else {
@@ -110,7 +118,9 @@
                     img.style.width = '20px';
                     img.style.height = '30px';
                     img.style.position = 'absolute';
-                    img.style.left = (i*5)+'px';
+                    img.style.left = (Math.floor(i/2)*5)+'px';
+                    img.style.top = (i%2)*8+'px';
+                    img.style.transform = i%2 ? 'rotate(90deg)' : 'rotate(0deg)';
                     won.appendChild(img);
                 });
             }
@@ -151,6 +161,7 @@
     }
 
     update();
+    setInterval(update, 1000);
     </script>
 </body>
 </html>

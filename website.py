@@ -17,6 +17,7 @@ def start():
     global game
     game = Game(num_players=players, num_rounds=rounds)
     game.start_round()
+    game.autoplay_until_player()
     return jsonify({'status': 'started'})
 
 @app.route('/reset', methods=['POST'])
@@ -31,8 +32,18 @@ def bid():
     bid_value = int(data.get('bid', 0))
     game.receive_bid('You', bid_value)
     game.manage_turns()
-    game.autoplay_trick()
+    game.autoplay_until_player()
     return jsonify({'status': 'bid received'})
+
+@app.route('/play', methods=['POST'])
+def play():
+    data = request.get_json()
+    card = data.get('card')
+    err = game.play_card('You', card)
+    if err:
+        return jsonify({'error': err}), 400
+    game.autoplay_until_player()
+    return jsonify({'status': 'card played'})
 
 @app.route('/state')
 def state():

@@ -99,9 +99,26 @@ class Game:
         return "All bids are in.", False  # Indicate bidding complete
 
     def play_card(self, player_name, card):
+        """Play ``card`` for ``player_name``.
+
+        Parameters
+        ----------
+        player_name : str
+            Name of the player.
+        card : Card or str
+            ``Card`` instance or string representation of the card.
+        """
+
         player = next((p for p in self.players if p.name == player_name), None)
         if not player:
             return f"Player {player_name} not found."
+
+        # Allow card to be provided as a string (e.g. "2_of_Hearts")
+        if isinstance(card, str):
+            card_obj = next((c for c in player.hand if str(c) == card), None)
+            if not card_obj:
+                return f"{player_name} cannot play {card}."
+            card = card_obj
 
         if card not in player.hand:
             return f"{player_name} cannot play {card}."
@@ -120,6 +137,17 @@ class Game:
             self.resolve_trick()
 
         return None
+
+    def autoplay_until_player(self):
+        """Have AI players play until it is the user's turn or the trick ends."""
+        while len(self.trick_cards) < self.num_players:
+            idx = (self.leader_index + len(self.trick_cards)) % self.num_players
+            player = self.players[idx]
+            if player.name == "You":
+                break
+            playable = self.get_playable_cards(player)
+            if playable:
+                self.play_card(player.name, playable[0])
 
     def get_playable_cards(self, player):
         if not self.trick_cards:
