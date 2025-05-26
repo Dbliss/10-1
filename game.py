@@ -116,3 +116,19 @@ class Game:
         """Return the path to the card image based on its suit and rank."""
         card_image_path = f"/assets/cards/{card.rank}_of_{card.suit}.png"  # Example path where card images are stored
         return card_image_path
+
+    def get_state(self):
+        """Return a serializable representation of the current game state."""
+        return {
+            'round': self.round_number,
+            'trump_card': self.get_card_image(self.trump_card) if self.trump_card else None,
+            'dealer': self.players[self.dealer_index].name if self.players else None,
+            'hands': [
+                {
+                    'name': p.name,
+                    'cards': [self.get_card_image(c) for c in p.hand],
+                    'bid': p.bid
+                }
+                for p in self.players
+            ]
+        }

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Oh Hell Card Game</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        body {font-family: Arial, sans-serif;}
+        .player {margin-bottom: 10px;}
+        .cards img {width:60px;height:80px;margin-right:5px;}
+    </style>
+</head>
+<body>
+    <h1>Oh Hell Card Game</h1>
+    <button onclick="post('/start')">Start Game</button>
+    <button onclick="post('/reset')">Reset Game</button>
+    <div>
+        <label>Bid: <input id="bid" type="number" min="0"></label>
+        <button onclick="makeBid()">Submit Bid</button>
+    </div>
+    <h3 id="round-info"></h3>
+    <div id="trump"></div>
+    <div id="players"></div>
+    <script>
+    async function post(url, data={}) {
+        await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+        await update();
+    }
+    async function makeBid() {
+        const bid = document.getElementById('bid').value;
+        await post('/bid', {bid: bid});
+    }
+    async function update() {
+        const res = await fetch('/state');
+        const data = await res.json();
+        document.getElementById('round-info').textContent = 'Round: '+data.round;
+        if (data.trump_card) {
+            document.getElementById('trump').innerHTML = '<img src="'+data.trump_card+'" alt="trump">';
+        } else {
+            document.getElementById('trump').textContent = 'No Trump';
+        }
+        const players = document.getElementById('players');
+        players.innerHTML = '';
+        data.hands.forEach(p => {
+            const div = document.createElement('div');
+            div.className = 'player';
+            const name = document.createElement('strong');
+            name.textContent = p.name + (p.name === data.dealer ? ' (dealer)' : '') + (p.bid !== null ? ' - Bid: '+p.bid : '');
+            div.appendChild(name);
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'cards';
+            p.cards.forEach(c => {
+                const img = document.createElement('img');
+                img.src = c;
+                cardDiv.appendChild(img);
+            });
+            div.appendChild(cardDiv);
+            players.appendChild(div);
+        });
+    }
+    update();
+    </script>
+</body>
+</html>
