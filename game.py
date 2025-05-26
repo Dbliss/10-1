@@ -74,6 +74,7 @@ class Game:
         for player in self.players:
             player.hand = self.deck.deal(num_cards)
             player.bid = None  # Reset bid for the new round
+            player.tricks_won = 0  # Clear tricks won for the new round
         self.current_cards -= 1
 
         return self.get_card_image(self.trump_card), {player.name: [self.get_card_image(card) for card in player.hand] for player in self.players}
@@ -205,13 +206,18 @@ class Game:
                 winning_name, winning_card = name, card
 
         self.tricks_won[winning_name] += 1
+        # Keep individual player objects in sync
+        winner = next((p for p in self.players if p.name == winning_name), None)
+        if winner:
+            winner.tricks_won += 1
         self.trick_piles[winning_name].extend([card for _, card in self.trick_cards])
         self.trick_cards = []
         self.lead_suit = None
         self.leader_index = next((i for i,p in enumerate(self.players) if p.name == winning_name), self.leader_index)
 
-        # If all players are out of cards, begin a new round
+        # If all players are out of cards, finish the round and begin a new one
         if all(len(p.hand) == 0 for p in self.players):
+            self.calculate_scores()
             if self.current_cards > 0:
                 self.start_round()
                 # Let AI bid until it's the player's turn
@@ -230,17 +236,18 @@ class Game:
                 self.play_card(player.name, card)
 
     def calculate_scores(self):
+        """Update each player's score based on their bid and tricks won."""
         scores = {}
         for player in self.players:
-            if player.tricks_won == player.bid:
-                if player.bid == 0:
-                    player.score += 10
-                else:
-                    earned = 10 * player.bid
-                    player.score += earned
+            tricks = self.tricks_won.get(player.name, 0)
+            player.tricks_won = tricks
+            bid = player.bid if player.bid is not None else 0
+
+            if bid == tricks:
+                player.score += min(tricks, 1)
             else:
-                penalty = 10 * abs(player.tricks_won - player.bid)
-                player.score -= penalty
+                player.score -= abs(bid - tricks)
+
             scores[player.name] = player.score
 
         return scores
