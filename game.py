@@ -129,6 +129,12 @@ class Game:
         if not player:
             return f"Player {player_name} not found."
 
+        # Enforce turn order based on leader and cards already played
+        expected_index = (self.leader_index + len(self.trick_cards)) % self.num_players
+        expected_player = self.players[expected_index]
+        if player != expected_player:
+            return f"It is not {player_name}'s turn."
+
         # Allow card to be provided as a string (e.g. "2_of_Hearts")
         if isinstance(card, str):
             card_obj = next((c for c in player.hand if str(c) == card), None)
@@ -199,6 +205,8 @@ class Game:
                 self.start_round()
                 # Let AI bid until it's the player's turn
                 self.manage_turns()
+                # After bidding, autoplay AI cards if they lead
+                self.autoplay_until_player()
 
     def autoplay_trick(self):
         """Automatically play a trick using simple logic"""
