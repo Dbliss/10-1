@@ -1,6 +1,5 @@
 # image_loader.py
 
-from PIL import Image, ImageTk
 import os
 
 CARD_IMAGES = {}
@@ -12,7 +11,7 @@ def load_card_images():
     for filename in os.listdir(cards_dir):
         if filename.endswith('.png') or filename.endswith('.jpg') or filename.endswith('.jpeg'):
             card_name = os.path.splitext(filename)[0]  # Remove extension
-            image_path = os.path.join('static', 'cards', filename)
+            image_path = os.path.join('assets', 'cards', filename)
             # Load color image
             CARD_IMAGES[card_name] = image_path
             # Create greyed-out image path
