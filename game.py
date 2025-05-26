@@ -6,9 +6,17 @@ import random
 RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace']
 
 class Game:
-    def __init__(self):
+    def __init__(self, num_players=4):
+        """Create a new game instance.
+
+        Parameters
+        ----------
+        num_players : int, optional
+            Total number of players including the user. The game UI supports up
+            to 8 seats and any unused seats will remain empty.
+        """
         self.round_number = 0
-        self.num_players = 8  # Including the user
+        self.num_players = num_players  # Including the user
         self.players = []
         self.deck = Deck()
         self.player = Player("You")
@@ -27,7 +35,10 @@ class Game:
         self.initialize_game()
 
     def initialize_game(self):
-        self.players = self.ai_players[0:2] + [self.player] + self.ai_players[2:self.num_players]
+        """Initialise the list of players for the game."""
+        # The user always takes the first seat and the remaining seats are
+        # filled with AI players up to ``num_players``.
+        self.players = [self.player] + self.ai_players[: self.num_players - 1]
         load_card_images()
 
     def determine_dealer(self):
@@ -132,11 +143,13 @@ class Game:
             'round': self.round_number,
             'trump_card': self.get_card_image(self.trump_card) if self.trump_card else None,
             'dealer': self.players[self.dealer_index].name if self.players else None,
-            'hands': [
+            'players': [
                 {
                     'name': p.name,
-                    'cards': [self.get_card_image(c) for c in p.hand],
-                    'bid': p.bid
+                    'cards': [self.get_card_image(c) for c in p.hand] if p.name == 'You' else [],
+                    'num_cards': len(p.hand),
+                    'bid': p.bid,
+                    'score': p.score
                 }
                 for p in self.players
             ]
