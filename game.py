@@ -90,6 +90,11 @@ class Game:
         return None
 
     def manage_turns(self):
+        """Advance bidding by one player.
+
+        This processes at most a single player's bid each call so that AI turns
+        occur individually rather than all at once.
+        """
         if self.phase != 'bidding':
             return "Bidding complete.", False
 
@@ -103,10 +108,12 @@ class Game:
 
             if current_player.name == "You":
                 return "Your turn to bid.", True
-            else:
-                ai_bid = random.randint(0, self.round_number)
-                self.receive_bid(current_player.name, ai_bid)
-                time.sleep(0.5)
+
+            # AI player's turn
+            ai_bid = random.randint(0, self.round_number)
+            self.receive_bid(current_player.name, ai_bid)
+            time.sleep(0.5)
+            break  # Only process one AI per call
 
         if len(self.bidders) == self.num_players:
             self.phase = 'playing'
@@ -155,18 +162,22 @@ class Game:
         return None
 
     def autoplay_until_player(self):
-        """Have AI players play until it is the user's turn or the trick ends."""
+        """Play a single AI card if it's not the player's turn."""
         if self.phase != 'playing':
             return
-        while len(self.trick_cards) < self.num_players:
-            idx = (self.leader_index + len(self.trick_cards)) % self.num_players
-            player = self.players[idx]
-            if player.name == "You":
-                break
-            playable = self.get_playable_cards(player)
-            if playable:
-                time.sleep(0.5)
-                self.play_card(player.name, playable[0])
+
+        if len(self.trick_cards) >= self.num_players:
+            return
+
+        idx = (self.leader_index + len(self.trick_cards)) % self.num_players
+        player = self.players[idx]
+        if player.name == "You":
+            return
+
+        playable = self.get_playable_cards(player)
+        if playable:
+            time.sleep(0.5)
+            self.play_card(player.name, playable[0])
 
     def get_playable_cards(self, player):
         if not self.trick_cards:
