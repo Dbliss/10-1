@@ -14,10 +14,16 @@ class Game:
         self.player = Player("You")
         self.ai_players = [Player(f"AI {i}") for i in range(1, self.num_players)]
         self.trump_card = None
-        self.tricks_won = {player.name: 0 for player in self.players}  # Track tricks won
+        # Track tricks won for each player; will be populated once players are initialized
+        self.tricks_won = {}
         self.bids = []
         self.bidders = set()  # Set to keep track of who has bid
         self.dealer_index = random.randint(0, self.num_players - 1)  # Randomly select the first dealer
+        # Track the cards played in the current trick and which suit was led
+        self.trick_cards = []
+        self.lead_suit = None
+        # Simple list to record actions for debugging/game history
+        self.log = []
         self.initialize_game()
 
     def initialize_game(self):
@@ -35,6 +41,9 @@ class Game:
         self.deck.shuffle()
         self.tricks_won = {player.name: 0 for player in self.players}  # Reset tricks won
         self.trump_card = self.deck.flip_trump()
+        # Reset trick state for the new round
+        self.trick_cards = []
+        self.lead_suit = None
 
         # Deal cards based on the round number
         for player in self.players:

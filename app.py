@@ -164,7 +164,8 @@ def update_game_layout(start_clicks, reset_clicks, bid_clicks, starting_round, p
 
     if bid_clicks and player_bid is not None:
         game.receive_bid("You", player_bid)
-        return update_game_layout(start_clicks, None, starting_round, None)  # Refresh the layout
+        # Refresh the layout after recording the bid
+        return update_game_layout(start_clicks, None, None, starting_round, None)
 
     return dash.no_update
 
