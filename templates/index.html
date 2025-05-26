@@ -57,6 +57,11 @@
 
     function renderState(data){
         document.getElementById('round-info').textContent = 'Round: ' + data.round;
+        if(data.phase === 'bidding'){
+            document.getElementById('bid-box').style.display = 'block';
+        }else{
+            document.getElementById('bid-box').style.display = 'none';
+        }
         const table = document.getElementById('table');
         table.innerHTML = '<div id="trump-card"></div><div id="trick-stack"></div>';
 
