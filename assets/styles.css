@@ -55,13 +55,26 @@ body {
 }
 
 #scoreboard {
-    position: absolute;
+    position: fixed;
     top: 0;
     right: 0;
     width: 200px;
     border: 1px solid #999;
     background: #fff;
     padding: 10px;
+}
+
+#trick-stack {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.won {
+    position: relative;
+    height: 35px;
+    margin-top: 2px;
 }
 
 #trump-card {

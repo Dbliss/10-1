@@ -6,7 +6,7 @@ import random
 RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace']
 
 class Game:
-    def __init__(self, num_players=4):
+    def __init__(self, num_players=4, num_rounds=10):
         """Create a new game instance.
 
         Parameters
@@ -15,8 +15,10 @@ class Game:
             Total number of players including the user. The game UI supports up
             to 8 seats and any unused seats will remain empty.
         """
-        self.round_number = 0
+        self.round_number = 0  # current round index (1 based)
         self.num_players = num_players  # Including the user
+        self.total_rounds = num_rounds
+        self.current_cards = num_rounds
         self.players = []
         self.deck = Deck()
         self.player = Player("You")
@@ -24,9 +26,11 @@ class Game:
         self.trump_card = None
         # Track tricks won for each player; will be populated once players are initialized
         self.tricks_won = {}
+        self.trick_piles = {}
         self.bids = []
         self.bidders = set()  # Set to keep track of who has bid
         self.dealer_index = random.randint(0, self.num_players - 1)  # Randomly select the first dealer
+        self.leader_index = (self.dealer_index + 1) % self.num_players
         # Track the cards played in the current trick and which suit was led
         self.trick_cards = []
         self.lead_suit = None
@@ -40,10 +44,13 @@ class Game:
         # filled with AI players up to ``num_players``.
         self.players = [self.player] + self.ai_players[: self.num_players - 1]
         load_card_images()
+        # initialise trick piles for each player
+        self.trick_piles = {player.name: [] for player in self.players}
 
     def determine_dealer(self):
         # Move the dealer clockwise
         self.dealer_index = (self.dealer_index + 1) % self.num_players
+        self.leader_index = (self.dealer_index + 1) % self.num_players
 
     def start_round(self):
         self.bids.clear()
@@ -51,15 +58,19 @@ class Game:
         self.deck = Deck()
         self.deck.shuffle()
         self.tricks_won = {player.name: 0 for player in self.players}  # Reset tricks won
+        self.trick_piles = {player.name: [] for player in self.players}
         self.trump_card = self.deck.flip_trump()
         # Reset trick state for the new round
         self.trick_cards = []
         self.lead_suit = None
 
-        # Deal cards based on the round number
+        # Determine how many cards to deal this round
+        num_cards = max(self.current_cards, 1)
+        self.round_number = self.total_rounds - self.current_cards + 1
         for player in self.players:
-            player.hand = self.deck.deal(self.round_number if self.round_number > 0 else 1)
+            player.hand = self.deck.deal(num_cards)
             player.bid = None  # Reset bid for the new round
+        self.current_cards -= 1
 
         return self.get_card_image(self.trump_card), {player.name: [self.get_card_image(card) for card in player.hand] for player in self.players}
 
@@ -87,22 +98,26 @@ class Game:
                 self.receive_bid(current_player.name, ai_bid)
         return "All bids are in.", False  # Indicate bidding complete
 
-    def play_card(self, player_name, card_str):
+    def play_card(self, player_name, card):
         player = next((p for p in self.players if p.name == player_name), None)
         if not player:
             return f"Player {player_name} not found."
 
-        card = self.deck.get_card(card_str)
         if card not in player.hand:
-            return f"{player_name} cannot play {card_str}."
+            return f"{player_name} cannot play {card}."
 
         playable_cards = self.get_playable_cards(player)
         if card not in playable_cards:
             return f"You must follow suit if possible."
 
         player.hand.remove(card)
-        self.tricks_won[player.name] += 1  # Increment tricks won
+        self.trick_cards.append((player.name, card))
+        if not self.lead_suit:
+            self.lead_suit = card.suit
         self.log_action(f"{player_name} played {card}")
+
+        if len(self.trick_cards) == self.num_players:
+            self.resolve_trick()
 
         return None
 
@@ -112,6 +127,34 @@ class Game:
         else:
             follow_suit_cards = [card for card in player.hand if card.suit == self.lead_suit]
             return follow_suit_cards if follow_suit_cards else player.hand
+
+    def resolve_trick(self):
+        """Determine the winner of the current trick and move the cards"""
+        if not self.trick_cards:
+            return
+
+        winning_name, winning_card = self.trick_cards[0]
+        for name, card in self.trick_cards[1:]:
+            if card.suit == winning_card.suit and card.value() > winning_card.value():
+                winning_name, winning_card = name, card
+            elif card.suit == self.trump_card.suit and winning_card.suit != self.trump_card.suit:
+                winning_name, winning_card = name, card
+
+        self.tricks_won[winning_name] += 1
+        self.trick_piles[winning_name].extend([card for _, card in self.trick_cards])
+        self.trick_cards = []
+        self.lead_suit = None
+        self.leader_index = next((i for i,p in enumerate(self.players) if p.name == winning_name), self.leader_index)
+
+    def autoplay_trick(self):
+        """Automatically play a trick using simple logic"""
+        start = self.leader_index
+        for offset in range(self.num_players):
+            idx = (start + offset) % self.num_players
+            player = self.players[idx]
+            if player.hand:
+                card = player.hand[0]
+                self.play_card(player.name, card)
 
     def calculate_scores(self):
         scores = {}
@@ -152,5 +195,11 @@ class Game:
                     'score': p.score
                 }
                 for p in self.players
-            ]
+            ],
+            'trick': [
+                {'player': name, 'card': self.get_card_image(card)} for name, card in self.trick_cards
+            ],
+            'won_piles': {
+                name: [self.get_card_image(c) for c in pile] for name, pile in self.trick_piles.items()
+            }
         }

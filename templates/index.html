@@ -7,26 +7,43 @@
 </head>
 <body>
     <h1>Oh Hell (10 to 1)</h1>
-    <button onclick="post('/start')">Start Game</button>
-    <button onclick="post('/reset')">Reset Game</button>
-    <div>
+    <div id="config-box" style="position:absolute;top:0;left:0;padding:10px;">
+        <label>Players:
+            <input id="numPlayers" type="number" value="4" min="2" max="8">
+        </label>
+        <label>Rounds:
+            <input id="numRounds" type="number" value="5" min="1" max="10">
+        </label>
+        <button onclick="startGame()">Start Game</button>
+        <button onclick="post('/reset')">Reset Game</button>
+    </div>
+    <div id="bid-box" style="display:none;">
         <label>Bid: <input id="bid" type="number" min="0"></label>
         <button onclick="makeBid()">Submit Bid</button>
     </div>
     <h3 id="round-info"></h3>
+    <div id="scoreboard" style="position:fixed;top:0;right:0;width:200px;">
+        <h3>Scores</h3>
+        <div id="score-content"></div>
+    </div>
     <div id="game-container">
         <div id="table">
             <div id="trump-card"></div>
-        </div>
-        <div id="scoreboard">
-            <h3>Scores</h3>
-            <div id="score-content"></div>
+            <div id="trick-stack"></div>
         </div>
     </div>
     <script>
     async function post(url, data={}) {
         await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
         await update();
+    }
+
+    async function startGame(){
+        const players = document.getElementById('numPlayers').value;
+        const rounds = document.getElementById('numRounds').value;
+        await post('/start', {players: players, rounds: rounds});
+        document.getElementById('bid-box').style.display = 'block';
+        document.getElementById('config-box').style.display = 'none';
     }
 
     async function makeBid() {
@@ -37,7 +54,7 @@
     function renderState(data){
         document.getElementById('round-info').textContent = 'Round: ' + data.round;
         const table = document.getElementById('table');
-        table.innerHTML = '<div id="trump-card"></div>';
+        table.innerHTML = '<div id="trump-card"></div><div id="trick-stack"></div>';
 
         const trump = document.getElementById('trump-card');
         if(data.trump_card){
@@ -83,11 +100,39 @@
                         cardDiv.appendChild(back);
                     }
                 }
-                seat.appendChild(cardDiv);
+            seat.appendChild(cardDiv);
+            const won = document.createElement('div');
+            won.className = 'won';
+            if(data.won_piles[p.name]){
+                data.won_piles[p.name].forEach((c,i)=>{
+                    const img = document.createElement('img');
+                    img.src = c;
+                    img.style.width = '20px';
+                    img.style.height = '30px';
+                    img.style.position = 'absolute';
+                    img.style.left = (i*5)+'px';
+                    won.appendChild(img);
+                });
+            }
+            seat.appendChild(won);
             } else {
                 seat.textContent = 'Empty';
             }
             table.appendChild(seat);
+        }
+
+        const stack = document.getElementById('trick-stack');
+        stack.innerHTML = '';
+        if(data.trick){
+            data.trick.forEach((t,i)=>{
+                const img = document.createElement('img');
+                img.src = t.card;
+                img.style.width = '50px';
+                img.style.height = '70px';
+                img.style.position = 'absolute';
+                img.style.left = (i*20)+'px';
+                stack.appendChild(img);
+            });
         }
 
         const sc = document.getElementById('score-content');
