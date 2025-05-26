@@ -2,6 +2,7 @@ from deck import Deck
 from player import Player
 from image_loader import load_card_images
 import random
+import time
 
 RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace']
 
@@ -36,6 +37,8 @@ class Game:
         self.lead_suit = None
         # Simple list to record actions for debugging/game history
         self.log = []
+        # Game phase: 'bidding' or 'playing'
+        self.phase = 'bidding'
         self.initialize_game()
 
     def initialize_game(self):
@@ -63,6 +66,7 @@ class Game:
         # Reset trick state for the new round
         self.trick_cards = []
         self.lead_suit = None
+        self.phase = 'bidding'
 
         # Determine how many cards to deal this round
         num_cards = max(self.current_cards, 1)
@@ -86,17 +90,29 @@ class Game:
         return None
 
     def manage_turns(self):
+        if self.phase != 'bidding':
+            return "Bidding complete.", False
+
         start_index = (self.dealer_index + 1) % self.num_players
         for idx in range(self.num_players):
             current_player_index = (start_index + idx) % self.num_players
             current_player = self.players[current_player_index]
 
+            if current_player.bid is not None:
+                continue
+
             if current_player.name == "You":
-                return "Your turn to play.", True  # Player's turn to play
+                return "Your turn to bid.", True
             else:
-                ai_bid = random.randint(0, self.round_number)  # AI bid example
+                ai_bid = random.randint(0, self.round_number)
                 self.receive_bid(current_player.name, ai_bid)
-        return "All bids are in.", False  # Indicate bidding complete
+                time.sleep(0.5)
+
+        if len(self.bidders) == self.num_players:
+            self.phase = 'playing'
+            return "All bids are in.", False
+
+        return "Waiting for bids.", False
 
     def play_card(self, player_name, card):
         """Play ``card`` for ``player_name``.
@@ -140,6 +156,8 @@ class Game:
 
     def autoplay_until_player(self):
         """Have AI players play until it is the user's turn or the trick ends."""
+        if self.phase != 'playing':
+            return
         while len(self.trick_cards) < self.num_players:
             idx = (self.leader_index + len(self.trick_cards)) % self.num_players
             player = self.players[idx]
@@ -147,6 +165,7 @@ class Game:
                 break
             playable = self.get_playable_cards(player)
             if playable:
+                time.sleep(0.5)
                 self.play_card(player.name, playable[0])
 
     def get_playable_cards(self, player):
@@ -173,6 +192,13 @@ class Game:
         self.trick_cards = []
         self.lead_suit = None
         self.leader_index = next((i for i,p in enumerate(self.players) if p.name == winning_name), self.leader_index)
+
+        # If all players are out of cards, begin a new round
+        if all(len(p.hand) == 0 for p in self.players):
+            if self.current_cards > 0:
+                self.start_round()
+                # Let AI bid until it's the player's turn
+                self.manage_turns()
 
     def autoplay_trick(self):
         """Automatically play a trick using simple logic"""
@@ -214,6 +240,7 @@ class Game:
             'round': self.round_number,
             'trump_card': self.get_card_image(self.trump_card) if self.trump_card else None,
             'dealer': self.players[self.dealer_index].name if self.players else None,
+            'phase': self.phase,
             'players': [
                 {
                     'name': p.name,

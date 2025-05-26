@@ -17,7 +17,7 @@ def start():
     global game
     game = Game(num_players=players, num_rounds=rounds)
     game.start_round()
-    game.autoplay_until_player()
+    game.manage_turns()
     return jsonify({'status': 'started'})
 
 @app.route('/reset', methods=['POST'])
