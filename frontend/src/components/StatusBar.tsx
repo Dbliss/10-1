@@ -6,8 +6,10 @@ function statusMessage(game: GameState): string {
 
   switch (awaiting) {
     case "user_bid":
+      if (game.blind) return "Blind round. Bid without seeing any cards.";
       return "Your bid. How many tricks will you take?";
     case "user_play":
+      if (game.blind) return "Your turn. Play and reveal your hidden card.";
       if (!lead_suit) return "Your lead. Play any card.";
       return hand.some((card) => card.suit === lead_suit)
         ? `Your turn. Follow ${lead_suit.toLowerCase()}.`
@@ -56,7 +58,7 @@ export function StatusBar({ game }: { game: GameState }) {
 
       <div className="tally">
         <span className="label">
-          {game.hand_size} {game.hand_size === 1 ? "trick" : "tricks"}
+          {game.blind ? "Blind round · 1 trick" : `${game.hand_size} ${game.hand_size === 1 ? "trick" : "tricks"}`}
         </span>
         <strong>{bidSummary(game)}</strong>
       </div>

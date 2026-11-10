@@ -36,4 +36,5 @@ class Rules:
 
     @property
     def hand_sizes(self):
-        return tuple(range(self.max_hand, 0, -1))
+        """Round labels; zero deals one hidden card per player."""
+        return tuple(range(self.max_hand, -1, -1)) + tuple(range(1, self.max_hand + 1))

@@ -15,6 +15,7 @@ BIDDING, PLAYING, DONE = 0, 1, 2
 NO_BID = -1
 NO_SUIT = -1
 NO_CARD = -1
+BLIND_CARD = -2  # Play the sole hidden card without revealing its identity.
 
 
 def legal_bids(rules, hand_size, bids):
@@ -39,13 +40,16 @@ class RoundState:
         'rules', 'n', 'hand_size', 'trump_card', 'trump_suit', 'dealer',
         'hands', 'bids', 'bids_made', 'to_act', 'phase', 'leader', 'lead_suit',
         'best_card', 'best_seat', 'trick_size', 'table', 'tricks_won',
-        'played', 'voids', 'history',
+        'played', 'voids', 'history', 'blind',
     )
 
-    def __init__(self, rules, hands, trump_card, dealer):
+    def __init__(self, rules, hands, trump_card, dealer, blind=False):
         self.rules = rules
         self.n = rules.num_players
         self.hand_size = hands[0].bit_count()
+        if blind and any(hand.bit_count() != 1 for hand in hands):
+            raise ValueError('A blind round requires one card per player.')
+        self.blind = blind
         self.trump_card = trump_card
         self.trump_suit = SUIT_OF[trump_card]
         self.dealer = dealer
@@ -71,6 +75,7 @@ class RoundState:
         copy.rules = self.rules
         copy.n = self.n
         copy.hand_size = self.hand_size
+        copy.blind = self.blind
         copy.trump_card = self.trump_card
         copy.trump_suit = self.trump_suit
         copy.dealer = self.dealer
@@ -95,6 +100,8 @@ class RoundState:
         if self.phase == BIDDING:
             return legal_bids(self.rules, self.hand_size, self.bids)
         if self.phase == PLAYING:
+            if self.blind:
+                return [BLIND_CARD]
             return cards_in(legal_card_mask(self.hands[self.to_act], self.lead_suit))
         return []
 
@@ -105,6 +112,8 @@ class RoundState:
         if self.phase == BIDDING:
             self._place_bid(action)
         else:
+            if self.blind:
+                action = cards_in(self.hands[self.to_act])[0]
             self.play_unchecked(action)
 
     def _place_bid(self, bid):
@@ -165,13 +174,14 @@ class RoundState:
         return Observation(
             rules=self.rules, n=self.n, hand_size=self.hand_size,
             trump_card=self.trump_card, trump_suit=self.trump_suit,
-            dealer=self.dealer, seat=seat, hand=self.hands[seat],
+            dealer=self.dealer, seat=seat, hand=0 if self.blind else self.hands[seat],
             bids=tuple(self.bids), to_act=self.to_act, phase=self.phase,
             leader=self.leader, lead_suit=self.lead_suit,
             best_card=self.best_card, best_seat=self.best_seat,
             trick_size=self.trick_size, table=self.table,
             tricks_won=tuple(self.tricks_won), played=self.played,
             voids=tuple(self.voids), history=tuple(self.history),
+            blind=self.blind,
         )
 
 
@@ -200,11 +210,14 @@ class Observation:
     played: int
     voids: tuple
     history: tuple
+    blind: bool = False
 
     def legal_actions(self):
         if self.phase == BIDDING:
             return legal_bids(self.rules, self.hand_size, self.bids)
         if self.phase == PLAYING:
+            if self.blind:
+                return [BLIND_CARD]
             return cards_in(legal_card_mask(self.hand, self.lead_suit))
         return []
 
@@ -218,6 +231,7 @@ class Observation:
         state.rules = self.rules
         state.n = self.n
         state.hand_size = self.hand_size
+        state.blind = self.blind
         state.trump_card = self.trump_card
         state.trump_suit = self.trump_suit
         state.dealer = self.dealer

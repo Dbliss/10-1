@@ -7,6 +7,20 @@ export function Hand({ game, onPlay }: { game: GameState; onPlay: (cardId: strin
   const playing = game.awaiting === "user_play";
   const middle = (cards.length - 1) / 2;
 
+  if (game.blind) {
+    return (
+      <div className="hand" key={game.round}>
+        {game.players[0].num_cards > 0 && (
+          <button type="button" className="hand-card blind-card"
+            disabled={!playing} aria-label="Play your hidden card"
+            onClick={() => onPlay("blind")}>
+            <span aria-hidden="true">?</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="hand" key={game.round} style={{ "--n": cards.length } as React.CSSProperties}>
       {cards.map((card, i) => {

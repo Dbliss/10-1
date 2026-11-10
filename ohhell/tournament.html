@@ -349,7 +349,7 @@
       render(stats);
       finished = stats.finished;
       $("sub").classList.remove("warn");
-      $("sub").textContent = `${stats.players[0].name} against ${stats.players[stats.baseline].name} at tables of 3 to 8 players, ${stats.time_ms} ms per turn for every simulating bot. Every set is one deal played from every seat. Checks every ${Math.floor(stats.max_sets / 10).toLocaleString()} sets.`;
+      $("sub").textContent = `${stats.players[0].name} against ${stats.players[stats.baseline].name} at tables of 3 to 8 players, ${stats.time_ms} ms per turn for every simulating bot. ${stats.round_format === "down-blind-up" ? "Hands go down to 1, blind 0, then back to the starting size. " : ""}Every set is one preset game played from every seat. Checks every ${Math.floor(stats.max_sets / 10).toLocaleString()} sets.`;
     } catch {
       $("sub").classList.add("warn");
       $("sub").textContent = "Lost contact with the tournament script. Showing the last results received.";

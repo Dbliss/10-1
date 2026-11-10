@@ -5,7 +5,7 @@ from ohhell.bots import DEFAULT_SPEC, make_bot
 from ohhell.cards import (
     RANK_NAMES, RANK_OF, SUIT_NAMES, SUIT_OF, card_from_id, card_id, cards_in,
 )
-from ohhell.engine import BIDDING, DONE, NO_BID, NO_SUIT, PLAYING, RoundState
+from ohhell.engine import BIDDING, BLIND_CARD, DONE, NO_BID, NO_SUIT, PLAYING, RoundState
 from ohhell.rules import Rules
 
 
@@ -36,10 +36,11 @@ class Game:
         return min(cls.MAX_HAND_SIZE, 51 // num_players)
 
     def __init__(self, num_players=4, num_rounds=10, bot_spec=None, advisor_spec=None):
-        """Create a game of ``num_rounds`` rounds, dealing that many cards first."""
+        """Deal ``num_rounds`` cards first, descend through blind, then ascend."""
         self.rules = Rules(num_players, num_rounds)
         self.num_players = num_players
-        self.total_rounds = num_rounds
+        self.round_sizes = self.rules.hand_sizes
+        self.total_rounds = len(self.round_sizes)
         self.names = [self.HUMAN_NAME] + [f"AI {i}" for i in range(1, num_players)]
         self.scores = [0] * num_players
         spec = bot_spec or self.BOT_SPEC
@@ -56,10 +57,11 @@ class Game:
     def start_round(self):
         if self.round_number > 0:
             self.dealer_index = (self.dealer_index + 1) % self.num_players
-        hand_size = self.total_rounds - self.round_number
+        hand_size = self.round_sizes[self.round_number]
         self.round_number += 1
-        hands, trump = deal_round(random, self.num_players, hand_size)
-        self.state = RoundState(self.rules, hands, trump, self.dealer_index)
+        hands, trump = deal_round(random, self.num_players, max(1, hand_size))
+        self.state = RoundState(self.rules, hands, trump, self.dealer_index,
+                                blind=hand_size == 0)
         self.finished_trick = None
         self.phase = 'bidding'
 
@@ -112,6 +114,12 @@ class Game:
         if self.names[self.state.to_act] != player_name:
             return f"It is not {player_name}'s turn."
 
+        if self.state.blind:
+            if card != 'blind':
+                return 'Play your hidden card.'
+            self._play(BLIND_CARD)
+            return None
+
         try:
             number = card_from_id(card)
         except (AttributeError, ValueError):
@@ -152,6 +160,8 @@ class Game:
         self.history.append({
             'round': self.round_number,
             'hand_size': self.state.hand_size,
+            'round_size': self.round_sizes[self.round_number - 1],
+            'blind': self.state.blind,
             'trump': self._card_json(self.state.trump_card),
             'results': results,
         })
@@ -166,6 +176,19 @@ class Game:
             return None
         advisor = make_bot(self.advisor_spec, random.getrandbits(32))
         obs = self.state.observation(0)
+        if obs.blind:
+            if obs.phase == BIDDING:
+                from ohhell.blind import bid_values
+                values, probability = bid_values(obs)
+                return {
+                    'kind': 'bid', 'recommended': max(values, key=values.get),
+                    'options': [
+                        {'bid': bid, 'expected_points': round(value, 1),
+                         'make_chance': round(probability if bid else 1 - probability, 3)}
+                        for bid, value in values.items()
+                    ],
+                }
+            return {'kind': 'blind', 'recommended': 'blind'}
         if obs.phase == BIDDING:
             analysis = advisor.analyse_bids(obs)
             best = max(analysis.values, key=analysis.values.get)
@@ -204,6 +227,8 @@ class Game:
             'awaiting': self._awaiting(current),
             'round': self.round_number,
             'total_rounds': self.total_rounds,
+            'round_sizes': list(self.round_sizes),
+            'blind': state.blind,
             'hand_size': state.hand_size,
             'trump': self._card_json(state.trump_card),
             'dealer': self.dealer_index,
@@ -219,12 +244,13 @@ class Game:
                 }
                 for seat, name in enumerate(self.names)
             ],
-            'hand': [self._card_json(c) for c in cards_in(state.hands[0])],
+            'hand': ([] if state.blind else
+                     [self._card_json(c) for c in cards_in(state.hands[0])]),
             'legal_bids': (
                 state.legal_actions() if users_turn and self.phase == 'bidding' else []
             ),
             'playable': (
-                [card_id(c) for c in state.legal_actions()]
+                [('blind' if c == BLIND_CARD else card_id(c)) for c in state.legal_actions()]
                 if users_turn and self.phase == 'playing' else []
             ),
             'trick': [

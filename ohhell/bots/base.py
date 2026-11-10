@@ -12,7 +12,16 @@ class Bot:
         self.rng = random.Random(seed)
 
     def act(self, obs):
+        if obs.blind:
+            if obs.phase != BIDDING:
+                return obs.legal_actions()[0]
+            return self.blind_bid(obs)
         return self.bid(obs) if obs.phase == BIDDING else self.play(obs)
+
+    def blind_bid(self, obs):
+        from ..blind import bid_values
+        values, _ = bid_values(obs)
+        return max(values, key=values.get)
 
     def bid(self, obs):
         raise NotImplementedError
@@ -26,6 +35,8 @@ class RandomBot(Bot):
 
     def bid(self, obs):
         return self.rng.choice(obs.legal_actions())
+
+    blind_bid = bid
 
     def play(self, obs):
         return self.rng.choice(obs.legal_actions())

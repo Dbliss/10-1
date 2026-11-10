@@ -343,6 +343,7 @@ class Scoreboard:
                 },
                 'smallest_gain': self.args.smallest_gain,
                 'time_ms': self.args.time_ms,
+                'round_format': 'down-blind-up',
                 'baseline': BASELINE,
                 'history': self.history,
                 'win_edge': wins.mean if wins.n else None,
@@ -432,6 +433,37 @@ def load_history():
     return entries
 
 
+def check_run_config(path, args, specs):
+    """Never mix saved sets from different rules, weights, or bot settings."""
+    import hashlib
+    from .learn.models import MODEL_DIR
+
+    weights = {}
+    for spec in specs:
+        name, _, settings = spec.partition(':')
+        if name not in ('net', 'hybrid'):
+            continue
+        options = dict(pair.split('=', 1) for pair in settings.split(',') if '=' in pair)
+        folder = Path(options.get('models', MODEL_DIR))
+        for filename in ('bid.npz', 'play.npz'):
+            model = folder / filename
+            weights[str(model.resolve())] = hashlib.sha256(model.read_bytes()).hexdigest()
+    config = {
+        'round_format': 'down-blind-up', 'specs': specs, 'seed': args.seed,
+        'max_sets': args.max_sets, 'smallest_gain': args.smallest_gain,
+        'time_ms': args.time_ms, 'player_split': list(PLAYER_SPLIT.items()),
+        'max_hand': MAX_HAND, 'weights': weights,
+    }
+    # Normalize tuples so the saved JSON compares identically on resume.
+    config = json.loads(json.dumps(config))
+    if args.resume:
+        if not path.exists() or json.loads(path.read_text()) != config:
+            raise SystemExit('Saved run uses different rules, models or settings. '
+                             'Start a new run with a new --label and without --resume.')
+    else:
+        path.write_text(json.dumps(config, indent=2))
+
+
 def play_stage(indices, add, saved, specs, board, output, args):
     """Feed sets to ``add`` in order, stopping as soon as it returns a verdict."""
     fresh = []
@@ -467,6 +499,7 @@ def run(args):
 
     lobby = build_lobby(args.candidate, args.baseline, args.time_ms, args.label)
     specs = [spec for _, _, spec in lobby]
+    check_run_config(GATES / f'{slug}.meta', args, specs)
     board = Scoreboard(args, lobby, load_history())
     saved = load_previous(results) if args.resume else {}
     server = serve(board, args.port)

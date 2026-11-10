@@ -16,6 +16,9 @@ class KindBot(HeuristicBot):
     def bid(self, obs):
         return noisy_bid(super().bid(obs), self.kind, self.rng, obs.legal_actions())
 
+    def blind_bid(self, obs):
+        return noisy_bid(super().blind_bid(obs), self.kind, self.rng, obs.legal_actions())
+
     def play(self, obs):
         if self.kind.card_noise and self.rng.random() < self.kind.card_noise:
             return self.rng.choice(obs.legal_actions())

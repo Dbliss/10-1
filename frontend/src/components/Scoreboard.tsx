@@ -38,11 +38,11 @@ export function Scoreboard({ game }: { game: GameState }) {
             {rounds.map((round) => {
               const history = game.history.find((entry) => entry.round === round);
               const trump = history?.trump ?? (round === game.round ? game.trump : null);
-              const handSize = game.total_rounds - round + 1;
+              const handSize = game.round_sizes[round - 1];
               const isCurrent = round === game.round && !history;
               return (
                 <tr key={round} className={isCurrent ? "row-now" : round > game.round ? "row-next" : ""}>
-                  <th scope="row">
+                  <th scope="row" title={handSize === 0 ? "Blind round: one hidden card each" : undefined}>
                     {handSize}
                     {trump && (
                       <span className={isRed(trump.suit) ? "suit-red" : "suit-light"}>

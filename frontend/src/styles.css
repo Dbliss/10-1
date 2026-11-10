@@ -270,6 +270,7 @@ img {
 
 .pips {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin: 0;
   padding: 0;
@@ -575,6 +576,20 @@ img {
 
 .hand-card:disabled {
   cursor: default;
+}
+
+.blind-card {
+  height: calc(var(--hand-w) * var(--card-ratio));
+  display: grid;
+  place-items: center;
+  color: var(--brass);
+  font-size: 48px;
+  border: 3px double var(--brass);
+  background: repeating-linear-gradient(45deg, #18394d, #18394d 6px, #102b3c 6px, #102b3c 12px);
+}
+
+.blind-card:enabled:hover {
+  transform: translateY(-12px);
 }
 
 .hand-card img {

@@ -37,14 +37,14 @@ function QuitButton({ onQuit }: { onQuit: () => void }) {
 }
 
 function RoundPips({ game }: { game: GameState }) {
-  const sizes = Array.from({ length: game.total_rounds }, (_, i) => game.total_rounds - i);
+  const sizes = game.round_sizes;
   return (
     <ol className="pips" aria-label={`Round ${game.round} of ${game.total_rounds}`}>
       {sizes.map((size, i) => {
         const round = i + 1;
         const state = round === game.round ? "now" : round < game.round ? "done" : "next";
         return (
-          <li key={size} className={`pip pip-${state}`} aria-hidden="true">
+          <li key={round} className={`pip pip-${state}`} title={size === 0 ? "Blind round" : undefined} aria-hidden="true">
             {size}
           </li>
         );

@@ -34,8 +34,12 @@ def test_a_whole_game_reaches_game_over(players, hand):
     state, shown = play_to_the_end(Game(players, hand, **FAST), random.Random(players))
     assert shown
     assert state['phase'] == 'game_over'
-    assert len(state['history']) == hand
-    assert [r['hand_size'] for r in state['history']] == list(range(hand, 0, -1))
+    sequence = list(range(hand, -1, -1)) + list(range(1, hand + 1))
+    assert len(state['history']) == 2 * hand + 1
+    assert state['round_sizes'] == sequence
+    assert [r['round_size'] for r in state['history']] == sequence
+    assert [r['hand_size'] for r in state['history']] == [max(1, size) for size in sequence]
+    assert [r['blind'] for r in state['history']].count(True) == 1
     final = state['history'][-1]['results']
     assert [p['score'] for p in state['players']] == [r['score'] for r in final]
 

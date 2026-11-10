@@ -22,7 +22,7 @@ function Dialog({ title, children }: { title: string; children: ReactNode }) {
 
 export function RoundSummaryDialog({ game, onNext }: { game: GameState; onNext: () => void }) {
   const last = game.history[game.history.length - 1];
-  const nextSize = last.hand_size - 1;
+  const nextSize = game.round_sizes[game.round];
 
   return (
     <Dialog title={`Round ${last.round} results`}>
@@ -53,7 +53,7 @@ export function RoundSummaryDialog({ game, onNext }: { game: GameState; onNext: 
         </tbody>
       </table>
       <button type="button" className="btn btn-primary btn-wide" onClick={onNext} autoFocus>
-        Deal {nextSize} {nextSize === 1 ? "card" : "cards"}
+        {nextSize === 0 ? "Deal blind round" : `Deal ${nextSize} ${nextSize === 1 ? "card" : "cards"}`}
       </button>
     </Dialog>
   );

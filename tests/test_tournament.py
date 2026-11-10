@@ -165,3 +165,17 @@ def test_old_results_cannot_be_resumed():
 def test_saved_results_are_read_by_index():
     record = [7, [0, 1, 2], [[1, 2, 3]] * 3, [[0, 0, 0]] * 3]
     assert t.load_previous(SavedFile(record)) == {7: record}
+
+
+def test_resume_rejects_old_rules_and_changed_settings(tmp_path):
+    from types import SimpleNamespace
+    args = SimpleNamespace(seed=1, max_sets=130, smallest_gain=1, time_ms=2, resume=True)
+    path = tmp_path / 'run.meta'
+    with pytest.raises(SystemExit, match='different rules'):
+        t.check_run_config(path, args, ['heuristic'])
+    args.resume = False
+    t.check_run_config(path, args, ['heuristic'])
+    args.resume = True
+    t.check_run_config(path, args, ['heuristic'])
+    with pytest.raises(SystemExit, match='different rules'):
+        t.check_run_config(path, args, ['random'])

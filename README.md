@@ -4,7 +4,7 @@ Play the card game **Oh Hell** (10 to 1) in the browser against bots. A React fr
 
 ## Rules
 
-Each round, players bid how many tricks they will take. Hands run from the opening size down to 1, with a card turned up for trumps. You must follow suit if you can.
+Each round, players bid how many tricks they will take. Hands run from the opening size down to 1, then a blind round labelled 0, then back up from 1 to the opening size. Starting at 10 gives 21 rounds. Scores carry through the whole game. In the blind round everyone gets one card, all hands stay hidden until played, and bids are 0 or 1. A card is turned up for trumps each round. You must follow suit if you can.
 
 - A made bid scores 10 per trick, and a made zero scores 10.
 - A missed bid loses 10 per trick off.

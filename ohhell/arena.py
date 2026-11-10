@@ -38,8 +38,8 @@ def play_game(bots, rules, seed, timed_seat=None):
     seconds = 0.0
     decisions = 0
     for hand_size in rules.hand_sizes:
-        hands, trump = deal_round(rng, n, hand_size)
-        state = RoundState(rules, hands, trump, dealer)
+        hands, trump = deal_round(rng, n, max(1, hand_size))
+        state = RoundState(rules, hands, trump, dealer, blind=hand_size == 0)
         while state.phase != DONE:
             seat = state.to_act
             obs = state.observation(seat)

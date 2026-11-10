@@ -25,11 +25,14 @@ export interface RoundResult {
 export interface RoundHistory {
   round: number;
   hand_size: number;
+  round_size: number;
+  blind: boolean;
   trump: Card;
   results: RoundResult[];
 }
 
 export type Advice =
+  | { kind: "blind"; recommended: "blind" }
   | {
       kind: "bid";
       recommended: number;
@@ -56,6 +59,8 @@ export interface GameState {
   awaiting: Awaiting;
   round: number;
   total_rounds: number;
+  round_sizes: number[];
+  blind: boolean;
   hand_size: number;
   trump: Card | null;
   dealer: number;

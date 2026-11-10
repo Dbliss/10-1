@@ -65,9 +65,10 @@ export function SetupScreen({ onStart }: { onStart: (players: number, handSize: 
       </button>
 
       <p className="setup-rules">
-        Each round deals one card fewer, down to one. Must follow suit; trumps beat everything else.
-        Make your bid for +1 point (a made bid of zero scores 0). Miss it and lose a point for every
-        trick you were off.
+        Deal down to one, then a blind round with one hidden card each, then back up to your
+        starting hand. Scores carry through all {2 * handSize + 1} rounds.
+        Must follow suit; trumps beat everything else. Make your bid for 10 points per trick
+        (a made zero scores 10). Miss it and lose 10 points for every trick you were off.
       </p>
     </main>
   );

@@ -85,6 +85,8 @@ export function AdvicePanel({ game }: { game: GameState }) {
         </button>
       ) : advice.kind === "bid" ? (
         <BidRows advice={advice} />
+      ) : advice.kind === "blind" ? (
+        <p>Play your hidden card to reveal it. There is only one card to play.</p>
       ) : (
         <CardRows advice={advice} />
       )}
