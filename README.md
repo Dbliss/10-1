@@ -91,13 +91,33 @@ Bots receive only what their seat can see. Each is named by a spec, such as `sim
 Compare two bots on identical deals:
 
 ```bash
-python -m ohhell.arena hybrid heuristic --games 300 --dealer-restriction
+python -m ohhell.arena hybrid heuristic --games 300
 ```
 
-Retrain the models by self-play, then copy the chosen generation's `bid.npz` and `play.npz` into `ohhell/models`:
+Build the optional C core, which makes simulations about 40 times faster. It needs `gcc`, and without it the bots use the Python code:
 
 ```bash
-python -m ohhell.learn.train --generations 1 --out runs
+python -m ohhell.native
 ```
 
-The current models are from generation 0 and were trained without the dealer rule. Later generations scored worse in the arena.
+Retrain the models on simulated tables of skilled, casual and random opponents:
+
+```bash
+python -m ohhell.learn.train --out ohhell/models/candidate
+```
+
+## Tournament
+
+Tests one candidate bot against the current version at tables of 3 to 8 players, weighted towards 4. The other seats are drawn each set from versions that lean passive or aggressive and from skilled, casual and novice players. Every set is one preset game played from every seat on identical cards, and every simulating bot gets the same time per turn, so spending more compute can't win. Open <http://localhost:8765/> to watch.
+
+```bash
+python -m ohhell.tournament "hybrid:field=previous,react=1" --label "Reactive rollouts"
+```
+
+The label is the candidate's name, and it is shown with the next version number. Each label gets its own deals, or pick them with `--seed`.
+
+The run is checked ten times, every 130 sets, and stops at a check where the candidate is definitely better, definitely worse, or clearly gains less than one point per game. A candidate that looks better then plays the same number of sets again on unseen deals, and only counts as better if it wins those too. Score decides the result, and the dashboard warns if win share clearly disagrees.
+
+If it wins, add it to `VERSIONS` in `ohhell/bots/__init__.py` with its number and name. The last entry is the bot the game uses.
+
+Results are saved in `runs/gates/`. Add `--resume` to continue an interrupted run.

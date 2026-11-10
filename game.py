@@ -1,7 +1,7 @@
 import random
 
 from ohhell.arena import deal_round
-from ohhell.bots import make_bot
+from ohhell.bots import DEFAULT_SPEC, make_bot
 from ohhell.cards import (
     RANK_NAMES, RANK_OF, SUIT_NAMES, SUIT_OF, card_from_id, card_id, cards_in,
 )
@@ -27,8 +27,8 @@ class Game:
     MIN_PLAYERS = 2
     MAX_PLAYERS = 8
     MAX_HAND_SIZE = 10
-    BOT_SPEC = 'hybrid'
-    ADVISOR_SPEC = 'hybrid:worlds=64,bid_worlds=128'
+    BOT_SPEC = DEFAULT_SPEC
+    ADVISOR_SPEC = f'{DEFAULT_SPEC},worlds=64,bid_worlds=128'
 
     @classmethod
     def max_hand_size(cls, num_players):
@@ -37,7 +37,7 @@ class Game:
 
     def __init__(self, num_players=4, num_rounds=10, bot_spec=None, advisor_spec=None):
         """Create a game of ``num_rounds`` rounds, dealing that many cards first."""
-        self.rules = Rules(num_players, num_rounds, dealer_restriction=True)
+        self.rules = Rules(num_players, num_rounds)
         self.num_players = num_players
         self.total_rounds = num_rounds
         self.names = [self.HUMAN_NAME] + [f"AI {i}" for i in range(1, num_players)]

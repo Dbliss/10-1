@@ -8,7 +8,9 @@ from ohhell.bots import make_bot
 from ohhell.cards import (
     SUIT_OF, card_from_id, card_id, cards_in, make_card, mask_of,
 )
+from ohhell.bots.heuristic import state_card
 from ohhell.engine import BIDDING, DONE, PLAYING, RoundState
+from ohhell.opponents import NOVICE, SKILLED, noisy_bid
 from ohhell.rules import Rules, Scoring
 from ohhell.search import distinct_moves, playout, solve, solve_root
 
@@ -81,7 +83,7 @@ def test_trick_winner(plays, winner):
 
 def test_dealer_restriction_only_binds_last_bidder():
     hands = [[C(CLUBS, r)] for r in range(3)]
-    free = table(hands, C(HEARTS, TWO), dealer=2)
+    free = table(hands, C(HEARTS, TWO), dealer=2, dealer_restriction=False)
     bid_all(free, [1, 0])
     assert free.legal_actions() == [0, 1]
     hooked = table(hands, C(HEARTS, TWO), dealer=2, dealer_restriction=True)
@@ -123,7 +125,8 @@ def test_sampled_worlds_respect_everything_known(seed, inference):
     state = mid_round(seed)
     obs = state.observation(state.to_act)
     rng = random.Random(seed)
-    for hands in Belief(inference=inference).worlds(obs, 8, rng):
+    for hands, kinds in Belief(inference=inference).worlds(obs, 8, rng):
+        assert len(kinds) == obs.n
         assert hands[obs.seat] == obs.hand
         all_cards = 0
         for s, hand in enumerate(hands):
@@ -184,7 +187,7 @@ def test_touching_cards_count_as_one_move():
     'random', 'heuristic',
     'simulation:worlds=3,bid_worlds=3',
     'inference:worlds=3,bid_worlds=3,oversample=2',
-    'net',
+    'net', 'novice', 'casual', 'mixed',
     'hybrid:worlds=3,bid_worlds=3,oversample=2',
 ])
 @pytest.mark.parametrize('players,hand', [(2, 5), (4, 6), (8, 6)])
@@ -207,3 +210,27 @@ def test_playout_finishes_with_every_trick_awarded():
     copy = state.clone()
     playout(copy)
     assert copy.phase == DONE and sum(copy.tricks_won) == 8
+
+
+def test_noisy_bids_stay_legal():
+    rng = random.Random(1)
+    options = [0, 1, 3]
+    for _ in range(200):
+        assert noisy_bid(1, NOVICE, rng, options) in options
+
+
+def test_inference_recognises_how_an_opponent_has_been_playing():
+    """Deals are weighted up for the kind that explains the plays so far."""
+    rng = random.Random(4)
+    hands, trump = deal_round(rng, 2, 8)
+    state = RoundState(Rules(2, 8), hands, trump, 1)
+    state.apply(4)
+    state.apply(5)
+    while state.hands[0].bit_count() > 3 or state.to_act != 0:
+        cards = state.legal_actions()
+        state.apply(state_card(state) if state.to_act == 1 else cards[0])
+    obs = state.observation(0)
+    worlds = [state.hands[0], state.hands[1]]
+    belief = Belief()
+    assert (belief.log_weight(obs, worlds, [SKILLED, SKILLED])
+            > belief.log_weight(obs, worlds, [SKILLED, NOVICE]))

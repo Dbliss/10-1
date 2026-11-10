@@ -138,10 +138,10 @@ def main():
     parser.add_argument('--players', type=int, default=4)
     parser.add_argument('--hand', type=int, default=10)
     parser.add_argument('--workers', type=int, default=None)
-    parser.add_argument('--dealer-restriction', action='store_true')
+    parser.add_argument('--no-dealer-restriction', action='store_true')
     parser.add_argument('--first-seed', type=int, default=0)
     args = parser.parse_args()
-    rules = Rules(args.players, args.hand, args.dealer_restriction)
+    rules = Rules(args.players, args.hand, not args.no_dealer_restriction)
     print(compare(args.candidate, args.baseline, rules, args.games,
                   args.workers, args.first_seed), flush=True)
 

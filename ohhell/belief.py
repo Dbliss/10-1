@@ -3,8 +3,8 @@
 ``sample_world`` draws a deal consistent with the hard facts: known cards, how
 many cards each seat holds, and the suits each seat has shown it lacks.
 
-``Belief`` adds soft evidence on top by importance resampling. Worlds in which
-an opponent's bid and plays look natural are kept more often.
+``Belief`` also guesses what kind of player each opponent is, and adds soft
+evidence by importance resampling.
 """
 
 import math
@@ -12,6 +12,7 @@ import math
 from .bots.heuristic import expected_tricks, state_card
 from .cards import FULL_DECK, SUIT_MASK, SUIT_OF, cards_in
 from .engine import NO_BID, PLAYING, RoundState, legal_card_mask
+from .opponents import FIELDS, KINDS, SKILLED
 
 
 def _assign(cards, capacity, voids, rng):
@@ -104,26 +105,35 @@ def sample_world(obs, rng):
 
 
 class Belief:
-    """Samples worlds, optionally weighted by opponents' bids and plays.
+    """Samples deals together with a kind of player for each opponent.
 
-    The opponent model is the heuristic bot, loosened so that it tolerates
-    players who don't behave like it: ``bid_sigma`` is how far a bid may stray
-    from the estimate, and ``play_miss`` is how much less likely a world becomes
-    when the observed card isn't the one the heuristic would have played.
+    With inference on, a deal and its kinds are kept more often when they
+    explain the bids and plays so far. A kind that plays erratically explains
+    any card equally, while a skilled kind explains sensible cards far better,
+    so the sample shifts towards whatever the table has actually shown.
     """
 
-    def __init__(self, inference=True, oversample=4, bid_sigma=1.4, play_miss=0.5):
+    def __init__(self, inference=True, oversample=4, field='mix', react=False):
+        self.react = react
         self.inference = inference
         self.oversample = oversample
-        self.bid_sigma = bid_sigma
-        self.play_log_miss = math.log(play_miss)
+        self.weights = FIELDS[field]
+
+    def _kinds(self, obs, rng):
+        kinds = rng.choices(KINDS, self.weights, k=obs.n)
+        kinds[obs.seat] = SKILLED
+        return kinds
 
     def worlds(self, obs, count, rng):
+        """Return ``count`` pairs of (every seat's hand, every seat's kind)."""
         if not self.inference or not self._has_evidence(obs):
-            return [sample_world(obs, rng) for _ in range(count)]
+            return [(sample_world(obs, rng), self._kinds(obs, rng)) for _ in range(count)]
 
-        candidates = [sample_world(obs, rng) for _ in range(count * self.oversample)]
-        logs = [self.log_weight(obs, hands) for hands in candidates]
+        candidates = [
+            (sample_world(obs, rng), self._kinds(obs, rng))
+            for _ in range(count * self.oversample)
+        ]
+        logs = [self.log_weight(obs, hands, kinds) for hands, kinds in candidates]
         top = max(logs)
         weights = [math.exp(v - top) for v in logs]
         return rng.choices(candidates, weights=weights, k=count)
@@ -132,7 +142,7 @@ class Belief:
     def _has_evidence(obs):
         return any(b != NO_BID for s, b in enumerate(obs.bids) if s != obs.seat)
 
-    def log_weight(self, obs, hands):
+    def log_weight(self, obs, hands, kinds):
         played_by = [0] * obs.n
         for seat, card in obs.history:
             played_by[seat] |= 1 << card
@@ -140,18 +150,18 @@ class Belief:
 
         total = 0.0
         first = (obs.dealer + 1) % obs.n
-        spread = 2.0 * self.bid_sigma ** 2
         for seat in range(obs.n):
             if seat != obs.seat and obs.bids[seat] != NO_BID:
                 estimate = expected_tricks(
                     opening[seat], obs.trump_card, obs.n, obs.hand_size, seat == first)
-                total -= (obs.bids[seat] - estimate) ** 2 / spread
+                sigma = kinds[seat].bid_sigma
+                total -= (obs.bids[seat] - estimate) ** 2 / (2.0 * sigma ** 2) + math.log(sigma)
 
         if obs.phase == PLAYING and obs.history:
-            total += self._play_log_weight(obs, opening)
+            total += self._play_log_weight(obs, opening, kinds)
         return total
 
-    def _play_log_weight(self, obs, opening):
+    def _play_log_weight(self, obs, opening, kinds):
         replay = RoundState(obs.rules, opening, obs.trump_card, obs.dealer)
         replay.history = None
         replay.bids = list(obs.bids)
@@ -162,8 +172,12 @@ class Belief:
         total = 0.0
         for seat, card in obs.history:
             if seat != obs.seat:
-                options = legal_card_mask(replay.hands[seat], replay.lead_suit)
-                if options & (options - 1) and state_card(replay) != card:
-                    total += self.play_log_miss
+                options = legal_card_mask(replay.hands[seat], replay.lead_suit).bit_count()
+                if options > 1:
+                    doubt = kinds[seat].play_doubt
+                    chance = doubt / options
+                    if state_card(replay, self.react) == card:
+                        chance += 1.0 - doubt
+                    total += math.log(chance)
             replay.play_unchecked(card)
         return total

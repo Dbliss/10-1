@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oh Hell Tournament</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #081430;
+    --panel: #0e2149;
+    --line: rgba(160, 188, 240, 0.18);
+    --ink: #eef3ff;
+    --muted: #a6b8dc;
+    --candidate: #e3bd74;
+    --current: #a6b8dc;
+    --up1: #f0a3a3;
+    --up2: #e66767;
+    --down1: #86b6ef;
+    --down2: #3987e5;
+    --skilled: #c79bf2;
+    --casual: #7fd6c2;
+    --novice: #8fa37a;
+    --gain: #7be8ae;
+    --loss: #ff9a9a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px clamp(16px, 3vw, 40px) 40px;
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { margin: 0; font-size: 22px; font-weight: 650; }
+  .sub { margin: 2px 0 20px; color: var(--muted); }
+  .warn { color: var(--loss); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .stat, .board {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .stat { padding: 12px 16px; }
+  .stat .label { color: var(--muted); font-size: 12px; }
+  .stat .value { margin-top: 2px; font-size: 26px; font-weight: 650; }
+  .stat .value.small { font-size: 18px; line-height: 39px; }
+
+  .progress { height: 6px; margin-bottom: 16px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .progress div { height: 100%; width: 0; background: var(--candidate); transition: width .3s linear; }
+
+  .banner { margin: 0 0 12px; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .banner.warn { border-color: var(--loss); }
+
+  .board { padding: 8px 16px 12px; overflow-x: auto; }
+  .row {
+    display: grid;
+    grid-template-columns: 230px 110px 120px 70px 70px 70px minmax(320px, 1fr);
+    align-items: center;
+    column-gap: 16px;
+    min-width: 1080px;
+    min-height: 72px;
+    border-bottom: 1px solid var(--line);
+  }
+  .row.head { min-height: 34px; color: var(--muted); font-size: 12px; }
+  .row.axis { min-height: 26px; border-bottom: 0; }
+  .row:nth-last-child(2) { border-bottom: 0; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .name { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .name .rank { width: 18px; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .swatch { flex: none; width: 12px; height: 12px; border-radius: 3px; }
+  .avg { font-size: 18px; font-weight: 650; }
+  .pm { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .gain { color: var(--gain); }
+  .loss { color: var(--loss); }
+
+  .curve { position: relative; height: 64px; }
+  .curve svg { display: block; width: 100%; height: 100%; }
+  .ticks { position: relative; height: 18px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .ticks span { position: absolute; transform: translateX(-50%); }
+  .history { margin-top: 16px; padding: 12px 16px; }
+  .history h2 { margin: 0 0 6px; font-size: 14px; font-weight: 650; }
+  .history .entry.head { color: var(--muted); font-size: 12px; }
+  .history .entry { display: grid; grid-template-columns: minmax(180px, 1fr) 110px 150px 90px; gap: 12px; padding: 4px 0; font-variant-numeric: tabular-nums; }
+  .note { margin: 12px 2px 0; color: var(--muted); font-size: 12px; }
+
+  #tip {
+    position: fixed;
+    z-index: 5;
+    display: none;
+    min-width: 230px;
+    padding: 8px 10px;
+    background: #142c5e;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+  #tip b { display: block; margin-bottom: 4px; }
+  #tip div { display: flex; justify-content: space-between; gap: 16px; }
+  #tip span:first-child { color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1>Oh Hell tournament: <span id="subject">…</span></h1>
+  <p class="sub" id="sub">Connecting to the tournament…</p>
+
+  <div class="stats">
+    <div class="stat"><div class="label">Games played</div><div class="value" id="games">0</div></div>
+    <div class="stat"><div class="label">Time left</div><div class="value" id="eta">…</div></div>
+    <div class="stat"><div class="label">Elapsed</div><div class="value" id="elapsed">0s</div></div>
+    <div class="stat"><div class="label">Speed</div><div class="value" id="rate">…</div></div>
+    <div class="stat"><div class="label">Next check</div><div class="value small" id="check">…</div></div>
+    <div class="stat"><div class="label" id="winLabel">Win share</div><div class="value small" id="winEdge">…</div></div>
+    <div class="stat"><div class="label" id="verdictLabel">Verdict</div><div class="value small" id="verdict">…</div></div>
+    <div class="stat"><div class="label" id="turnLabel">Time per turn</div><div class="value small" id="turn">…</div></div>
+  </div>
+  <div class="progress"><div id="bar"></div></div>
+  <p class="banner" id="repeat" hidden></p>
+  <p class="banner warn" id="disagree" hidden></p>
+
+  <div class="board">
+    <div class="row head">
+      <div>Player</div>
+      <div class="num">Avg score</div>
+      <div class="num" id="edgeHead">Against current</div>
+      <div class="num">Wins</div>
+      <div class="num">Max</div>
+      <div class="num">Std dev</div>
+      <div>Score distribution (normal curve from each player's mean and deviation)</div>
+    </div>
+    <div id="rows"></div>
+    <div class="row axis">
+      <div></div><div></div><div></div><div></div><div></div><div></div>
+      <div class="ticks" id="ticks"></div>
+    </div>
+  </div>
+  <p class="note" id="note"></p>
+  <div class="board history tables">
+    <h2>Candidate's edge by table size</h2>
+    <div id="tables"></div>
+  </div>
+  <div class="board history" id="historyBox" hidden>
+    <h2>Earlier tests</h2>
+    <div id="history"></div>
+  </div>
+  <div id="tip" role="status"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const VIEW_W = 1000, VIEW_H = 64, STEPS = 120;
+  let latest = null, domain = null, built = false;
+
+  const text = (v, digits = 1) => v === null || v === undefined ? "…" : v.toFixed(digits);
+  const signed = (v) => v === null || v === undefined ? "…" : (v > 0 ? "+" : "") + v.toFixed(1);
+
+  function duration(seconds) {
+    if (seconds === null || seconds === undefined) return "…";
+    const s = Math.round(seconds);
+    if (s >= 3600) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+    if (s >= 60) return `${Math.floor(s / 60)}m ${s % 60}s`;
+    return `${s}s`;
+  }
+
+  const density = (x, m, sd) => Math.exp(-0.5 * ((x - m) / sd) ** 2) / (sd * Math.sqrt(2 * Math.PI));
+
+  function cdf(z) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const d = 0.3989423 * Math.exp(-z * z / 2);
+    const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return z > 0 ? 1 - p : p;
+  }
+
+  function build(players) {
+    $("rows").innerHTML = players.map((p, i) => `
+      <div class="row">
+        <div class="name">
+          <span class="rank" id="rank${i}"></span>
+          <span class="swatch" style="background:var(--${p.role})"></span>
+          <span>${p.name}</span>
+        </div>
+        <div class="num"><span class="avg" id="mean${i}">…</span><span class="pm" id="ci${i}"></span></div>
+        <div class="num"><span id="edge${i}">…</span><span class="pm" id="edgeci${i}"></span></div>
+        <div class="num" id="wins${i}">…</div>
+        <div class="num" id="max${i}">…</div>
+        <div class="num" id="sd${i}">…</div>
+        <div class="curve">
+          <svg viewBox="0 0 ${VIEW_W} ${VIEW_H}" preserveAspectRatio="none" aria-hidden="true">
+            <path id="fill${i}" fill="var(--${p.role})" fill-opacity="${p.role === "candidate" ? 0.3 : 0.14}"></path>
+            <path id="line${i}" fill="none" stroke="var(--${p.role})" stroke-width="${p.role === "candidate" ? 2.5 : 1.75}" vector-effect="non-scaling-stroke"></path>
+            <line id="base${i}" y1="0" y2="${VIEW_H}" stroke="#a6b8dc" stroke-opacity="0.35" vector-effect="non-scaling-stroke"></line>
+            <line id="meanline${i}" y1="0" y2="${VIEW_H}" stroke="var(--${p.role})" stroke-width="2" vector-effect="non-scaling-stroke"></line>
+            <line id="cursor${i}" y1="0" y2="${VIEW_H}" stroke="#eef3ff" stroke-opacity="0.7" vector-effect="non-scaling-stroke" visibility="hidden"></line>
+          </svg>
+        </div>
+      </div>`).join("");
+    document.querySelectorAll(".curve").forEach((el) => {
+      el.addEventListener("mousemove", hover);
+      el.addEventListener("mouseleave", leave);
+    });
+    built = true;
+  }
+
+  function niceDomain(players) {
+    const low = Math.min(...players.map((p) => p.mean - 3.2 * p.sd));
+    const high = Math.max(...players.map((p) => p.mean + 3.2 * p.sd));
+    const step = niceStep(high - low);
+    return { low: Math.floor(low / step) * step, high: Math.ceil(high / step) * step, step };
+  }
+
+  function niceStep(span) {
+    const raw = span / 8, power = 10 ** Math.floor(Math.log10(raw)), scaled = raw / power;
+    return (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10) * power;
+  }
+
+  const toX = (v) => (v - domain.low) / (domain.high - domain.low) * VIEW_W;
+
+  function drawCurves(players, baseline) {
+    const ready = players.every((p) => p.sd);
+    if (!ready) return;
+    domain = niceDomain(players);
+    const top = Math.max(...players.map((p) => density(p.mean, p.mean, p.sd)));
+    const toY = (d) => VIEW_H - 3 - d / top * (VIEW_H - 8);
+
+    players.forEach((p, i) => {
+      let path = "";
+      for (let k = 0; k <= STEPS; k++) {
+        const x = domain.low + (domain.high - domain.low) * k / STEPS;
+        path += `${k ? "L" : "M"}${(k / STEPS * VIEW_W).toFixed(1)} ${toY(density(x, p.mean, p.sd)).toFixed(2)}`;
+      }
+      $(`line${i}`).setAttribute("d", path);
+      $(`fill${i}`).setAttribute("d", `${path}L${VIEW_W} ${VIEW_H - 3}L0 ${VIEW_H - 3}Z`);
+      const mean = toX(p.mean), base = toX(players[baseline].mean);
+      for (const a of ["x1", "x2"]) {
+        $(`meanline${i}`).setAttribute(a, mean);
+        $(`base${i}`).setAttribute(a, base);
+      }
+    });
+
+    let ticks = "";
+    for (let v = domain.low; v <= domain.high + 1e-6; v += domain.step) {
+      ticks += `<span style="left:${(v - domain.low) / (domain.high - domain.low) * 100}%">${Math.round(v)}</span>`;
+    }
+    $("ticks").innerHTML = ticks;
+  }
+
+  function hover(event) {
+    if (!latest || !domain) return;
+    const box = event.currentTarget.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+    const score = domain.low + (domain.high - domain.low) * fraction;
+    latest.players.forEach((_, i) => {
+      const line = $(`cursor${i}`);
+      line.setAttribute("x1", fraction * VIEW_W);
+      line.setAttribute("x2", fraction * VIEW_W);
+      line.setAttribute("visibility", "visible");
+    });
+    const tip = $("tip");
+    tip.innerHTML = `<b>Chance of scoring ${Math.round(score)} or less</b>` + latest.players.map((p) =>
+      `<div><span>${p.name}</span><span>${(cdf((score - p.mean) / p.sd) * 100).toFixed(1)}%</span></div>`).join("");
+    tip.style.display = "block";
+    const width = tip.offsetWidth, height = tip.offsetHeight;
+    tip.style.left = Math.min(event.clientX + 14, innerWidth - width - 8) + "px";
+    tip.style.top = Math.min(event.clientY + 14, innerHeight - height - 8) + "px";
+  }
+
+  function leave() {
+    if (latest) latest.players.forEach((_, i) => $(`cursor${i}`).setAttribute("visibility", "hidden"));
+    $("tip").style.display = "none";
+  }
+
+  function render(s) {
+    latest = s;
+    if (!built) build(s.players);
+    $("games").textContent = `${s.games.toLocaleString()} / ${s.total.toLocaleString()}`;
+    $("eta").textContent = s.finished ? "Done" : duration(s.eta);
+    $("elapsed").textContent = duration(s.elapsed);
+    $("rate").textContent = s.rate ? `${(s.rate * 60).toFixed(0)}/min` : "…";
+    $("bar").style.width = `${s.games / s.total * 100}%`;
+    const word = { better: "Better", worse: "Worse", "no gain": "No real gain", inconclusive: "Inconclusive", unconfirmed: "Didn't repeat" };
+    const candidate = s.players[0].name, current = s.players[s.baseline].name;
+    const candidateTag = candidate.split(" ")[0], currentTag = current.split(" ")[0];
+    $("verdict").textContent = s.verdict ? word[s.verdict] : s.stage === "repeat" ? "Repeating" : "Still testing";
+    $("verdict").className = "value small " + (s.verdict === "better" ? "gain" : s.verdict ? "loss" : "");
+    $("verdictLabel").textContent = `Verdict on ${candidate}`;
+    $("turnLabel").textContent = `Time per turn, ${candidateTag} / ${currentTag}`;
+    $("winLabel").textContent = `Win share, ${candidateTag} minus ${currentTag}`;
+    $("edgeHead").textContent = `vs ${current}`;
+    $("winEdge").textContent = s.win_edge === null ? "…"
+      : `${s.win_edge > 0 ? "+" : ""}${(s.win_edge * 100).toFixed(1)}%` + (s.win_edge_interval === null ? "" : ` ± ${(s.win_edge_interval * 100).toFixed(1)}`);
+    $("check").textContent = s.finished || s.stage === "repeat" ? "Done" : `at ${s.next_check.toLocaleString()} sets`;
+    $("turn").textContent = s.players[0].ms_per_turn === null ? `limit ${s.time_ms} ms`
+      : `${s.players[0].ms_per_turn.toFixed(2)} / ${s.players[s.baseline].ms_per_turn.toFixed(2)} ms`;
+    $("subject").textContent = `${candidate} vs ${current}`;
+    $("note").textContent = `The ± figures are 95% margins of error. ${candidate}'s margin is wider early on because the run may stop at any of its ten checks. Wins is the share of games won at the tables that player sat at. The vertical line in each curve marks that player's average, and the fainter line across all curves marks ${current}'s average.`;
+    $("repeat").hidden = s.stage !== "repeat";
+    if (s.stage === "repeat") {
+      $("repeat").textContent = `${candidate} looked better after ${s.sets.toLocaleString()} sets, so it ${s.finished ? "repeated" : "is repeating"} on unseen deals: `
+        + `${s.repeat.sets.toLocaleString()} of ${s.repeat.target.toLocaleString()} sets, edge ${signed(s.repeat.edge)}`
+        + (s.repeat.margin === null ? "" : ` ± ${s.repeat.margin.toFixed(1)}`) + " points.";
+    }
+    $("disagree").hidden = !s.disagree;
+    $("disagree").textContent = `Warning: ${candidate} is on opposite sides of ${current} for score and for win share.`;
+    $("tables").innerHTML = `<div class="entry head"><span>Table</span><span>Sets</span><span>Edge</span><span>Hand</span></div>`
+      + s.tables.map((t) => `<div class="entry"><span>${t.players} players</span><span>${t.sets.toLocaleString()}</span>`
+      + `<span>${signed(t.edge)}${t.margin === null ? "" : ` ± ${t.margin.toFixed(1)}`}</span><span>${t.cards} cards</span></div>`).join("");
+    $("historyBox").hidden = !s.history.length;
+    $("history").innerHTML = s.history.map((h) => `<div class="entry"><span>${h.label}</span>`
+      + `<span class="${h.verdict === "better" ? "gain" : "loss"}">${word[h.verdict]}</span>`
+      + `<span>${signed(h.edge)} ± ${h.margin.toFixed(1)} points</span><span>${h.sets} sets</span></div>`).join("");
+
+    // Rank by the paired edge: raw averages mix table sizes differently per player.
+    const ranked = s.players.map((p, i) => [p.edge ?? -Infinity, i]).sort((a, b) => b[0] - a[0]);
+    ranked.forEach(([, i], place) => { $(`rank${i}`).textContent = s.games ? place + 1 : ""; });
+
+    s.players.forEach((p, i) => {
+      $(`mean${i}`).textContent = text(p.mean);
+      $(`ci${i}`).textContent = p.interval === null ? "" : `± ${p.interval.toFixed(1)}`;
+      $(`wins${i}`).textContent = p.win_share === null ? "…" : `${(p.win_share * 100).toFixed(1)}%`;
+      $(`max${i}`).textContent = p.max ?? "…";
+      $(`sd${i}`).textContent = text(p.sd);
+      const edge = $(`edge${i}`);
+      if (i === s.baseline) {
+        edge.textContent = "—";
+        edge.className = "";
+        $(`edgeci${i}`).textContent = "";
+      } else {
+        edge.textContent = signed(p.edge);
+        const clear = p.edge_interval !== null && Math.abs(p.edge) > p.edge_interval;
+        edge.className = clear ? (p.edge > 0 ? "gain" : "loss") : "";
+        $(`edgeci${i}`).textContent = p.edge_interval === null ? "" : `± ${p.edge_interval.toFixed(1)}`;
+      }
+    });
+    drawCurves(s.players, s.baseline);
+  }
+
+  async function poll() {
+    let finished = false;
+    try {
+      const response = await fetch("/stats");
+      const stats = await response.json();
+      render(stats);
+      finished = stats.finished;
+      $("sub").classList.remove("warn");
+      $("sub").textContent = `${stats.players[0].name} against ${stats.players[stats.baseline].name} at tables of 3 to 8 players, ${stats.time_ms} ms per turn for every simulating bot. Every set is one deal played from every seat. Checks every ${Math.floor(stats.max_sets / 10).toLocaleString()} sets.`;
+    } catch {
+      $("sub").classList.add("warn");
+      $("sub").textContent = "Lost contact with the tournament script. Showing the last results received.";
+    }
+    setTimeout(poll, finished ? 5000 : 1000);
+  }
+  poll();
+</script>
+</body>
+</html>

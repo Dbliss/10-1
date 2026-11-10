@@ -150,11 +150,31 @@ def _lowest_rank(mask):
     return best
 
 
-def choose_card(hand, trump, lead_suit, best_card, trick_size, n, seen, need):
+def table_read(seat, n, bids, won, trick_size, left):
+    """What the other bids say about this trick, for ``choose_card``.
+
+    Returns whether a seat still to play wants tricks, and whether the table
+    needs more tricks in total than the ``left`` still to be played.
+    """
+    behind_wants = False
+    total = 0
+    for offset in range(n):
+        other = (seat + offset) % n
+        short = bids[other] - won[other]
+        if short > 0:
+            total += short
+            if 0 < offset < n - trick_size:
+                behind_wants = True
+    return behind_wants, total > left
+
+
+def choose_card(hand, trump, lead_suit, best_card, trick_size, n, seen, need,
+                behind_wants=True, scarce=False):
     """Pick a card from one player's point of view.
 
     ``seen`` is every card that player knows the location of, and ``need`` is
-    their bid minus the tricks they have taken.
+    their bid minus the tricks they have taken. ``behind_wants`` and ``scarce``
+    come from ``table_read``; the defaults ignore the other players.
     """
     want = need > 0
     if lead_suit == NO_SUIT:
@@ -170,15 +190,15 @@ def choose_card(hand, trump, lead_suit, best_card, trick_size, n, seen, need):
         if want:
             if not winners:
                 return lowest(losers)
-            if last:
+            if last or not behind_wants:  # nobody left will fight for this trick
                 return lowest(winners)
             top = highest(winners)
-            if _is_boss(top, seen) or trick_size * 2 >= n or not losers:
+            if _is_boss(top, seen) or trick_size * 2 >= n or not losers or scarce:
                 return top
             return lowest(losers)
         if losers:
             return highest(losers)
-        return highest(winners) if last else lowest(winners)
+        return highest(winners) if last or not behind_wants else lowest(winners)
 
     trumps = hand & SUIT_MASK[trump]
     sides = hand ^ trumps
@@ -202,19 +222,25 @@ def choose_card(hand, trump, lead_suit, best_card, trick_size, n, seen, need):
     return highest(trumps) if last else lowest(trumps)
 
 
-def state_card(state):
+def state_card(state, react=False):
     """Run ``choose_card`` for whoever is to act in a full ``RoundState``."""
     seat = state.to_act
     hand = state.hands[seat]
+    read = (table_read(seat, state.n, state.bids, state.tricks_won, state.trick_size,
+                       hand.bit_count()) if react else ())
     return choose_card(
         hand, state.trump_suit, state.lead_suit, state.best_card,
         state.trick_size, state.n,
         state.played | hand | (1 << state.trump_card),
-        state.bids[seat] - state.tricks_won[seat])
+        state.bids[seat] - state.tricks_won[seat], *read)
 
 
 class HeuristicBot(Bot):
     """Bids from per-card odds and plays to reach or avoid its target."""
+
+    def __init__(self, seed=0, react=False):
+        super().__init__(seed)
+        self.react = react
 
     def bid(self, obs):
         leads = obs.seat == (obs.dealer + 1) % obs.n
@@ -223,8 +249,10 @@ class HeuristicBot(Bot):
                             obs.rules.scoring)
 
     def play(self, obs):
+        read = (table_read(obs.seat, obs.n, obs.bids, obs.tricks_won, obs.trick_size,
+                           obs.hand.bit_count()) if self.react else ())
         return choose_card(
             obs.hand, obs.trump_suit, obs.lead_suit, obs.best_card,
             obs.trick_size, obs.n,
             obs.played | obs.hand | (1 << obs.trump_card),
-            obs.bids[obs.seat] - obs.tricks_won[obs.seat])
+            obs.bids[obs.seat] - obs.tricks_won[obs.seat], *read)

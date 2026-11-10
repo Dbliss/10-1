@@ -22,7 +22,7 @@ class Rules:
     num_players: int = 4
     max_hand: int = 10
     # When true, the last bidder may not make the bids add up to the hand size.
-    dealer_restriction: bool = False
+    dealer_restriction: bool = True
     scoring: Scoring = field(default_factory=Scoring)
 
     def __post_init__(self):

@@ -5,3 +5,7 @@ __pycache__/
 node_modules/
 frontend/dist/
 *.tsbuildinfo
+
+runs/
+ohhell/native/*.dll
+ohhell/native/*.so
