@@ -1,286 +1,294 @@
-from deck import Deck
-from player import Player
-from image_loader import load_card_images
 import random
-import time
 
-RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace']
+from ohhell.arena import deal_round
+from ohhell.bots import DEFAULT_SPEC, make_bot
+from ohhell.cards import (
+    EFFECTIVE_SUIT, POWER, RANK_NAMES, RANK_OF, SUIT_NAMES, SUIT_OF, card_from_id, card_id,
+    cards_in,
+)
+from ohhell.engine import BIDDING, BLIND_CARD, DONE, NO_BID, NO_SUIT, PLAYING, RoundState
+from ohhell.rules import Rules
+
 
 class Game:
-    def __init__(self, num_players=4, num_rounds=10):
-        """Create a new game instance.
+    """One game of Oh Hell for the web app: a human in seat 0 against bots.
 
-        Parameters
-        ----------
-        num_players : int, optional
-            Total number of players including the user. The game UI supports up
-            to 8 seats and any unused seats will remain empty.
-        """
-        self.round_number = 0  # current round index (1 based)
-        self.num_players = num_players  # Including the user
-        self.total_rounds = num_rounds
-        self.current_cards = num_rounds
-        self.players = []
-        self.deck = Deck()
-        self.player = Player("You")
-        self.ai_players = [Player(f"AI {i}") for i in range(1, self.num_players)]
-        self.trump_card = None
-        # Track tricks won for each player; will be populated once players are initialized
-        self.tricks_won = {}
-        self.trick_piles = {}
-        self.bids = []
-        self.bidders = set()  # Set to keep track of who has bid
-        self.dealer_index = random.randint(0, self.num_players - 1)  # Randomly select the first dealer
-        self.leader_index = (self.dealer_index + 1) % self.num_players
-        # Track the cards played in the current trick and which suit was led
-        self.trick_cards = []
-        self.lead_suit = None
-        # Simple list to record actions for debugging/game history
-        self.log = []
-        # Game phase: 'bidding' or 'playing'
+    The rules live in ``ohhell.engine``. This class adds the pacing the UI needs:
+
+    ``bidding`` -> ``playing`` <-> ``trick_complete`` -> ``round_over``
+    -> ``bidding`` for the next round, or ``game_over`` after the last one.
+
+    Nothing happens on its own. The user acts through ``receive_bid`` and
+    ``play_card``, and everything else (a bot's turn, collecting a finished
+    trick, dealing the next round) is one call to ``advance``, which lets the
+    UI pace and animate each step.
+    """
+
+    HUMAN_NAME = "You"
+    MIN_PLAYERS = 2
+    MAX_PLAYERS = 8
+    MAX_HAND_SIZE = 10
+    BOT_SPEC = DEFAULT_SPEC
+    ADVISOR_SPEC = f'{DEFAULT_SPEC},worlds=64,bid_worlds=128'
+
+    @classmethod
+    def max_hand_size(cls, num_players):
+        """Largest opening hand that leaves a card to turn up as trump."""
+        return min(cls.MAX_HAND_SIZE, 51 // num_players)
+
+    def __init__(self, num_players=4, num_rounds=10, bot_spec=None, advisor_spec=None):
+        """Deal ``num_rounds`` cards first, descend through blind, then ascend."""
+        self.rules = Rules(num_players, num_rounds)
+        self.num_players = num_players
+        self.round_sizes = self.rules.hand_sizes
+        self.total_rounds = len(self.round_sizes)
+        self.names = [self.HUMAN_NAME] + [f"AI {i}" for i in range(1, num_players)]
+        self.scores = [0] * num_players
+        spec = bot_spec or self.BOT_SPEC
+        self.bots = [None] + [
+            make_bot(spec, random.getrandbits(32)) for _ in range(1, num_players)]
+        self.advisor_spec = advisor_spec or self.ADVISOR_SPEC
+        self.dealer_index = random.randrange(num_players)
+        self.round_number = 0
+        self.state = None
         self.phase = 'bidding'
-        self.initialize_game()
-
-    def initialize_game(self):
-        """Initialise the list of players for the game."""
-        # The user always takes the first seat and the remaining seats are
-        # filled with AI players up to ``num_players``.
-        self.players = [self.player] + self.ai_players[: self.num_players - 1]
-        load_card_images()
-        # initialise trick piles for each player
-        self.trick_piles = {player.name: [] for player in self.players}
-
-    def determine_dealer(self):
-        # Move the dealer clockwise
-        self.dealer_index = (self.dealer_index + 1) % self.num_players
-        self.leader_index = (self.dealer_index + 1) % self.num_players
+        self.finished_trick = None  # (seat, card) pairs while a trick is on show
+        self.history = []  # one entry per finished round, for the scoreboard
 
     def start_round(self):
-        self.bids.clear()
-        self.bidders.clear()  # Clear the set of bidders
-        self.deck = Deck()
-        self.deck.shuffle()
-        self.tricks_won = {player.name: 0 for player in self.players}  # Reset tricks won
-        self.trick_piles = {player.name: [] for player in self.players}
-        self.trump_card = self.deck.flip_trump()
-        # Reset trick state for the new round
-        self.trick_cards = []
-        self.lead_suit = None
+        if self.round_number > 0:
+            self.dealer_index = (self.dealer_index + 1) % self.num_players
+        hand_size = self.round_sizes[self.round_number]
+        self.round_number += 1
+        hands, trump = deal_round(random, self.num_players, max(1, hand_size))
+        self.state = RoundState(self.rules, hands, trump, self.dealer_index,
+                                blind=hand_size == 0)
+        self.finished_trick = None
         self.phase = 'bidding'
 
-        # Determine how many cards to deal this round
-        num_cards = max(self.current_cards, 1)
-        self.round_number = self.total_rounds - self.current_cards + 1
-        for player in self.players:
-            player.hand = self.deck.deal(num_cards)
-            player.bid = None  # Reset bid for the new round
-            player.tricks_won = 0  # Clear tricks won for the new round
-        self.current_cards -= 1
+    def current_player_index(self):
+        """Seat of the player who must act, or None between turns."""
+        return self.state.to_act if self.phase in ('bidding', 'playing') else None
 
-        return self.get_card_image(self.trump_card), {player.name: [self.get_card_image(card) for card in player.hand] for player in self.players}
+    def advance(self):
+        """Perform the next step that does not need input from the user.
+
+        Does nothing when the game is waiting on the user or has finished.
+        """
+        if self.phase == 'trick_complete':
+            self.collect_trick()
+        elif self.phase == 'round_over':
+            self.start_round()
+        elif self.phase in ('bidding', 'playing') and self.state.to_act != 0:
+            seat = self.state.to_act
+            action = self.bots[seat].act(self.state.observation(seat))
+            if self.phase == 'bidding':
+                self._place_bid(action)
+            else:
+                self._play(action)
 
     def receive_bid(self, player_name, bid):
-        player = next((p for p in self.players if p.name == player_name), None)
-        if player and player_name not in self.bidders:
-            player.bid = bid
-            self.bids.append(bid)  # Append the actual bid amount
-            self.bidders.add(player_name)  # Track that this player has bid
-            if len(self.bidders) == self.num_players:
-                self.determine_dealer()  # Determine new dealer
-                return "All bids are in, dealer is now: " + self.players[self.dealer_index].name
+        """Record a bid. Returns an error message if the bid is rejected."""
+        if self.phase != 'bidding':
+            return "Bidding is over."
+        if self.names[self.state.to_act] != player_name:
+            return f"It is not {player_name}'s turn to bid."
+        if not 0 <= bid <= self.state.hand_size:
+            return f"Bid must be between 0 and {self.state.hand_size}."
+        if bid not in self.state.legal_actions():
+            return f"The dealer can't bid {bid}: the bids can't add up to the hand size."
+        self._place_bid(bid)
         return None
 
-    def manage_turns(self):
-        """Advance bidding by one player.
-
-        This processes at most a single player's bid each call so that AI turns
-        occur individually rather than all at once.
-        """
-        if self.phase != 'bidding':
-            return "Bidding complete.", False
-
-        start_index = (self.dealer_index + 1) % self.num_players
-        for idx in range(self.num_players):
-            current_player_index = (start_index + idx) % self.num_players
-            current_player = self.players[current_player_index]
-
-            if current_player.bid is not None:
-                continue
-
-            if current_player.name == "You":
-                return "Your turn to bid.", True
-
-            # AI player's turn
-            ai_bid = random.randint(0, self.round_number)
-            self.receive_bid(current_player.name, ai_bid)
-            time.sleep(0.5)
-            break  # Only process one AI per call
-
-        if len(self.bidders) == self.num_players:
+    def _place_bid(self, bid):
+        self.state.apply(bid)
+        if self.state.phase == PLAYING:
             self.phase = 'playing'
-            return "All bids are in.", False
-
-        return "Waiting for bids.", False
 
     def play_card(self, player_name, card):
-        """Play ``card`` for ``player_name``.
+        """Play a card, named like ``Jack_of_Hearts``, for ``player_name``.
 
-        Parameters
-        ----------
-        player_name : str
-            Name of the player.
-        card : Card or str
-            ``Card`` instance or string representation of the card.
+        Returns an error message if the play is rejected.
         """
-
-        player = next((p for p in self.players if p.name == player_name), None)
-        if not player:
-            return f"Player {player_name} not found."
-
-        # Enforce turn order based on leader and cards already played
-        expected_index = (self.leader_index + len(self.trick_cards)) % self.num_players
-        expected_player = self.players[expected_index]
-        if player != expected_player:
+        if self.phase != 'playing':
+            return "Cards cannot be played right now."
+        if self.names[self.state.to_act] != player_name:
             return f"It is not {player_name}'s turn."
 
-        # Allow card to be provided as a string (e.g. "2_of_Hearts")
-        if isinstance(card, str):
-            card_obj = next((c for c in player.hand if str(c) == card), None)
-            if not card_obj:
-                return f"{player_name} cannot play {card}."
-            card = card_obj
+        if self.state.blind:
+            if card != 'blind':
+                return 'Play your hidden card.'
+            self._play(BLIND_CARD)
+            return None
 
-        if card not in player.hand:
-            return f"{player_name} cannot play {card}."
+        try:
+            number = card_from_id(card)
+        except (AttributeError, ValueError):
+            number = None
+        if number is None or not self.state.hands[self.state.to_act] >> number & 1:
+            return f"{player_name} does not hold that card."
+        if number not in self.state.legal_actions():
+            return "You must follow suit if possible."
 
-        playable_cards = self.get_playable_cards(player)
-        if card not in playable_cards:
-            return f"You must follow suit if possible."
-
-        player.hand.remove(card)
-        self.trick_cards.append((player.name, card))
-        if not self.lead_suit:
-            self.lead_suit = card.suit
-        self.log_action(f"{player_name} played {card}")
-
-        if len(self.trick_cards) == self.num_players:
-            self.resolve_trick()
-
+        self._play(number)
         return None
 
-    def autoplay_until_player(self):
-        """Play a single AI card if it's not the player's turn."""
-        if self.phase != 'playing':
-            return
+    def _play(self, card):
+        self.state.apply(card)
+        if self.state.trick_size == 0:
+            self.finished_trick = self.state.history[-self.num_players:]
+            self.phase = 'trick_complete'
 
-        if len(self.trick_cards) >= self.num_players:
-            return
-
-        idx = (self.leader_index + len(self.trick_cards)) % self.num_players
-        player = self.players[idx]
-        if player.name == "You":
-            return
-
-        playable = self.get_playable_cards(player)
-        if playable:
-            time.sleep(0.5)
-            self.play_card(player.name, playable[0])
-
-    def get_playable_cards(self, player):
-        if not self.trick_cards:
-            return player.hand
-        else:
-            follow_suit_cards = [card for card in player.hand if card.suit == self.lead_suit]
-            return follow_suit_cards if follow_suit_cards else player.hand
-
-    def resolve_trick(self):
-        """Determine the winner of the current trick and move the cards"""
-        if not self.trick_cards:
-            return
-
-        winning_name, winning_card = self.trick_cards[0]
-        for name, card in self.trick_cards[1:]:
-            if card.suit == winning_card.suit and card.value() > winning_card.value():
-                winning_name, winning_card = name, card
-            elif card.suit == self.trump_card.suit and winning_card.suit != self.trump_card.suit:
-                winning_name, winning_card = name, card
-
-        self.tricks_won[winning_name] += 1
-        # Keep individual player objects in sync
-        winner = next((p for p in self.players if p.name == winning_name), None)
-        if winner:
-            winner.tricks_won += 1
-        self.trick_piles[winning_name].extend([card for _, card in self.trick_cards])
-        self.trick_cards = []
-        self.lead_suit = None
-        self.leader_index = next((i for i,p in enumerate(self.players) if p.name == winning_name), self.leader_index)
-
-        # If all players are out of cards, finish the round and begin a new one
-        if all(len(p.hand) == 0 for p in self.players):
+    def collect_trick(self):
+        """Clear the finished trick; the winner leads the next one."""
+        self.finished_trick = None
+        self.phase = 'playing'
+        if self.state.phase == DONE:
             self.calculate_scores()
-            if self.current_cards > 0:
-                self.start_round()
-                # Let AI bid until it's the player's turn
-                self.manage_turns()
-                # After bidding, autoplay AI cards if they lead
-                self.autoplay_until_player()
-
-    def autoplay_trick(self):
-        """Automatically play a trick using simple logic"""
-        start = self.leader_index
-        for offset in range(self.num_players):
-            idx = (start + offset) % self.num_players
-            player = self.players[idx]
-            if player.hand:
-                card = player.hand[0]
-                self.play_card(player.name, card)
+            self.phase = 'round_over' if self.round_number < self.total_rounds else 'game_over'
 
     def calculate_scores(self):
-        """Update each player's score based on their bid and tricks won."""
-        scores = {}
-        for player in self.players:
-            tricks = self.tricks_won.get(player.name, 0)
-            player.tricks_won = tricks
-            bid = player.bid if player.bid is not None else 0
+        """Add this round's points and record the round for the scoreboard."""
+        results = []
+        for seat, points in enumerate(self.state.points()):
+            self.scores[seat] += points
+            results.append({
+                'bid': self.state.bids[seat],
+                'tricks': self.state.tricks_won[seat],
+                'points': points,
+                'score': self.scores[seat],
+            })
+        self.history.append({
+            'round': self.round_number,
+            'hand_size': self.state.hand_size,
+            'round_size': self.round_sizes[self.round_number - 1],
+            'blind': self.state.blind,
+            'trump': self._card_json(self.state.trump_card),
+            'results': results,
+        })
 
-            if bid == tricks:
-                player.score += min(tricks, 1)
-            else:
-                player.score -= abs(bid - tricks)
+    def advice(self):
+        """The bot's analysis of the user's current decision, or None.
 
-            scores[player.name] = player.score
-
-        return scores
-
-    def log_action(self, action_text):
-        self.log.append(action_text)
-
-    def get_card_image(self, card):
-        """Return the path to the card image based on its suit and rank."""
-        card_image_path = f"/assets/cards/{card.rank}_of_{card.suit}.png"  # Example path where card images are stored
-        return card_image_path
+        Works only from what the user's own seat can see.
+        """
+        current = self.current_player_index()
+        if current != 0:
+            return None
+        advisor = make_bot(self.advisor_spec, random.getrandbits(32))
+        obs = self.state.observation(0)
+        if obs.blind:
+            if obs.phase == BIDDING:
+                from ohhell.blind import bid_values
+                values, probability = bid_values(obs)
+                return {
+                    'kind': 'bid', 'recommended': max(values, key=values.get),
+                    'options': [
+                        {'bid': bid, 'expected_points': round(value, 1),
+                         'make_chance': round(probability if bid else 1 - probability, 3)}
+                        for bid, value in values.items()
+                    ],
+                }
+            return {'kind': 'blind', 'recommended': 'blind'}
+        if obs.phase == BIDDING:
+            analysis = advisor.analyse_bids(obs)
+            best = max(analysis.values, key=analysis.values.get)
+            return {
+                'kind': 'bid',
+                'recommended': best,
+                'options': [
+                    {
+                        'bid': bid,
+                        'expected_points': round(analysis.values[bid], 1),
+                        'make_chance': round(analysis.distributions[bid][bid], 3),
+                    }
+                    for bid in sorted(analysis.values)
+                ],
+            }
+        values = advisor.evaluate_cards(obs)
+        best = max(values, key=values.get)
+        return {
+            'kind': 'card',
+            'recommended': card_id(best),
+            'options': [
+                {'card': self._card_json(card), 'expected_points': round(value, 1)}
+                for card, value in sorted(values.items(), key=lambda kv: -kv[1])
+            ],
+        }
 
     def get_state(self):
-        """Return a serializable representation of the current game state."""
+        """Return what the user is allowed to see, as JSON-friendly data."""
+        state = self.state
+        current = self.current_player_index()
+        users_turn = current == 0
+        trick = self._trick_on_table()
+
         return {
-            'round': self.round_number,
-            'trump_card': self.get_card_image(self.trump_card) if self.trump_card else None,
-            'dealer': self.players[self.dealer_index].name if self.players else None,
             'phase': self.phase,
+            'awaiting': self._awaiting(current),
+            'round': self.round_number,
+            'total_rounds': self.total_rounds,
+            'round_sizes': list(self.round_sizes),
+            'blind': state.blind,
+            'hand_size': state.hand_size,
+            'trump': self._card_json(state.trump_card),
+            'dealer': self.dealer_index,
+            'current_player': current,
             'players': [
                 {
-                    'name': p.name,
-                    'cards': [self.get_card_image(c) for c in p.hand] if p.name == 'You' else [],
-                    'num_cards': len(p.hand),
-                    'bid': p.bid,
-                    'score': p.score
+                    'name': name,
+                    'is_human': seat == 0,
+                    'num_cards': state.hands[seat].bit_count(),
+                    'bid': None if state.bids[seat] == NO_BID else state.bids[seat],
+                    'tricks_won': state.tricks_won[seat],
+                    'score': self.scores[seat],
                 }
-                for p in self.players
+                for seat, name in enumerate(self.names)
             ],
+            'hand': ([] if state.blind else
+                     [self._card_json(c) for c in cards_in(state.hands[0])]),
+            'legal_bids': (
+                state.legal_actions() if users_turn and self.phase == 'bidding' else []
+            ),
+            'playable': (
+                [('blind' if c == BLIND_CARD else card_id(c)) for c in state.legal_actions()]
+                if users_turn and self.phase == 'playing' else []
+            ),
             'trick': [
-                {'player': name, 'card': self.get_card_image(card)} for name, card in self.trick_cards
+                {'seat': seat, 'card': self._card_json(card)} for seat, card in trick
             ],
-            'won_piles': {
-                name: [self.get_card_image(c) for c in pile] for name, pile in self.trick_piles.items()
-            }
+            'lead_suit': (SUIT_NAMES[EFFECTIVE_SUIT[state.trump_suit][trick[0][1]]]
+                          if trick else None),
+            'trick_winner': state.leader if self.phase == 'trick_complete' else None,
+            'history': self.history,
+        }
+
+    def _trick_on_table(self):
+        if self.finished_trick is not None:
+            return self.finished_trick
+        size = self.state.trick_size
+        return self.state.history[-size:] if size else []
+
+    def _awaiting(self, current):
+        """Name the next thing that has to happen, so the UI can react to it."""
+        if self.phase == 'trick_complete':
+            return 'collect_trick'
+        if self.phase == 'round_over':
+            return 'next_round'
+        if self.phase == 'game_over':
+            return 'nothing'
+        if current != 0:
+            return 'bot'
+        return 'user_bid' if self.phase == 'bidding' else 'user_play'
+
+    def _card_json(self, card):
+        """Describe a card. ``plays_as`` and ``power`` follow this round's trump,
+        so the left bower plays as a trump and both bowers outrank the Ace."""
+        trump = self.state.trump_suit
+        return {
+            'id': card_id(card),
+            'suit': SUIT_NAMES[SUIT_OF[card]],
+            'rank': RANK_NAMES[RANK_OF[card]],
+            'plays_as': SUIT_NAMES[EFFECTIVE_SUIT[trump][card]],
+            'power': POWER[trump][card],
         }

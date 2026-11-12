@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+runs/
+ohhell/native/*.dll
+ohhell/native/*.so
