@@ -2,9 +2,10 @@
 
 Give the cards you hold, the number of players, the trump (the turned-up card,
 or just its suit) and the bids already made before you. The game's advisor
-then estimates each bid's chance of being made exactly. It uses the calibrated
-quick estimate (``ohhell/estimate.py``, ``estimate=2``) to choose which bids to
-compare and to imagine the other players' bids.
+then estimates each bid's chance of being made exactly. The advisor is the
+game's default bot (the current best version) with more sampled deals per
+decision. The calibrated quick estimate (``ohhell/estimate.py``) is shown only
+as a note; it does not drive the recommendation.
 """
 
 import random
@@ -17,7 +18,7 @@ from ohhell.cards import JACK, SUIT_NAMES, card_from_id, make_card, mask_of
 from ohhell.engine import RoundState
 from ohhell.rules import Rules
 
-ADVISOR_SPEC = f'{Game.ADVISOR_SPEC},estimate=2'
+ADVISOR_SPEC = Game.ADVISOR_SPEC
 
 
 def _parse_card(text):

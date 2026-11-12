@@ -135,7 +135,8 @@ def main():
     parser.add_argument('--epochs', type=int, default=12)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--workers', type=int, default=max(1, (os.cpu_count() or 2) - 1))
-    parser.add_argument('--out', default=str(MODEL_DIR))
+    parser.add_argument('--out', default=str(MODEL_DIR / 'candidate'),
+                        help='where to save; never the default folder, which holds the current best')
     args = parser.parse_args()
 
     began = time.time()

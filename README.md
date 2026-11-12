@@ -145,8 +145,8 @@ against the original on unseen deals with:
 python -m ohhell.learn.calibrate_estimate --train 100000 --test 30000 --write
 ```
 
-The bid helper uses it. It is not the bot's default: its arena smoke check
-against v2 was negative (see [the experiment log](BOT_EXPERIMENTS.md)).
+The bid helper shows it as a note but recommends bids with the default bot. It
+is not the bot's default: its arena smoke check against v2 was negative (see [the experiment log](BOT_EXPERIMENTS.md)).
 
 For separate bidding/card-play case banks, cached outcome labels, component
 reports and training-data exports, see [BOT_CASES.md](BOT_CASES.md).
