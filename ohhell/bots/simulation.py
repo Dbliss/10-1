@@ -4,6 +4,7 @@ import math
 import time
 from dataclasses import dataclass
 
+from .. import estimate as estimate_v2
 from .. import native
 from ..belief import Belief
 from ..engine import NO_BID, PLAYING
@@ -22,12 +23,18 @@ class BidAnalysis:
 
     distributions: dict
     values: dict
+    samples: int = 0
 
 
-def heuristic_bid(hand, obs, seat):
+def heuristic_bid(hand, obs, seat, estimate=1):
+    options = range(obs.hand_size + 1)
+    if estimate >= 2:
+        position = estimate_v2.first_trick_position(seat, obs.dealer, obs.n)
+        dist = estimate_v2.bid_distribution(
+            hand, obs.trump_card, obs.n, obs.hand_size, position, version=estimate)
+        return best_bid_for(dist, options, obs.rules.scoring)
     leads = seat == (obs.dealer + 1) % obs.n
     probs = card_win_probs(hand, obs.trump_card, obs.n, obs.hand_size, leads)
-    options = range(obs.hand_size + 1)
     return best_bid_for(trick_distribution(probs), options, obs.rules.scoring)
 
 
@@ -61,24 +68,37 @@ class SimulationBot(HeuristicBot):
     ``time_ms`` caps each turn: sampling continues in blocks of ``worlds`` or
     ``bid_worlds`` until the time is up. ``react`` makes the simulated players
     respond to the other seats' bids.
+
+    ``estimate`` picks the quick trick estimate used to shortlist our bids,
+    imagine the bids of seats still to bid, and judge (with inference) how
+    well a sampled deal explains the bids already made: 1 is the original
+    rule of thumb, 2 the calibrated estimate in ``ohhell/estimate.py``, 3 its
+    refit with discard features and a fitted spread.
+
+    ``bid_sigma`` replaces every opponent kind's ``bid_sigma``: how far, in
+    tricks, inference expects a bid to stray from the quick estimate.
     """
 
     def __init__(self, seed=0, worlds=32, bid_worlds=64, endgame_cards=12,
                  inference=False, oversample=4, field='mix', confidence=0.0,
-                 fast=True, time_ms=None, react=False):
+                 fast=True, time_ms=None, react=False, estimate=1, bid_sigma=None):
         super().__init__(seed, react=react)
+        if estimate not in (1, 2, 3):
+            raise ValueError('estimate must be 1, 2 or 3.')
+        self.estimate = estimate
         self.time_limit = time_ms / 1000.0 if time_ms else None
         self.deadline = None
         self.worlds = worlds
         self.bid_worlds = bid_worlds
         self.endgame_cards = endgame_cards
         self.belief = Belief(inference=inference, oversample=oversample, field=field,
-                             react=react)
+                             react=react, estimate=estimate, bid_sigma=bid_sigma)
         self.confidence = confidence
         self.simulator = None
         if fast and native.available:
             self.simulator = native.Simulator(
-                seed, inference, oversample, field, endgame_cards, Scoring(), react)
+                seed, inference, oversample, field, endgame_cards, Scoring(), react, estimate,
+                bid_sigma)
 
     def act(self, obs):
         self.deadline = time.perf_counter() + self.time_limit if self.time_limit else None
@@ -113,25 +133,41 @@ class SimulationBot(HeuristicBot):
 
     def analyse_bids(self, obs):
         """Estimate P(exactly k tricks) if we bid b, for each plausible b."""
+        return self._analyse_bids(obs, self._bid_options(obs))
+
+    def _bid_options(self, obs):
+        """The current bot's heuristic shortlist, in legal bid order."""
+        legal = obs.legal_actions()
+        if self.estimate >= 2:
+            position = estimate_v2.first_trick_position(obs.seat, obs.dealer, obs.n)
+            estimate = estimate_v2.expected_tricks(
+                obs.hand, obs.trump_card, obs.n, obs.hand_size, position,
+                version=self.estimate)
+            low = max(estimate_v2.certain_tricks(obs.hand, obs.trump_card),
+                      math.floor(estimate) - 1)
+            high = min(obs.hand_size, math.ceil(estimate) + 2)
+            return [b for b in legal if low <= b <= high] or legal
         leads = obs.seat == (obs.dealer + 1) % obs.n
         probs = card_win_probs(obs.hand, obs.trump_card, obs.n, obs.hand_size, leads)
         estimate = sum(probs)
         low = max(0, math.floor(estimate) - 1)
         high = min(obs.hand_size, math.ceil(estimate) + 2)
-        legal = obs.legal_actions()
-        options = [b for b in legal if low <= b <= high] or legal
+        return [b for b in legal if low <= b <= high] or legal
 
+    def _analyse_bids(self, obs, options):
         if self.simulator:
             distributions = self.simulator.analyse_bids(
                 obs, options, self.bid_worlds, self._time_left())
+            samples = self.simulator.last_bid_samples
         else:
             distributions = self._simulate_bids(obs, options)
+            samples = self.last_bid_samples
         score = obs.rules.scoring.points
         values = {
             b: sum(p * score(b, k) for k, p in enumerate(dist))
             for b, dist in distributions.items()
         }
-        return BidAnalysis(distributions, values)
+        return BidAnalysis(distributions, values, samples)
 
     def _simulate_bids(self, obs, options):
         counts = {b: [0] * (obs.hand_size + 1) for b in options}
@@ -144,7 +180,7 @@ class SimulationBot(HeuristicBot):
             for seat in range(obs.n):
                 if obs.bids[seat] == NO_BID and seat != obs.seat:
                     base.bids[seat] = noisy_bid(
-                        heuristic_bid(hands[seat], obs, seat), kinds[seat], self.rng,
+                        heuristic_bid(hands[seat], obs, seat, self.estimate), kinds[seat], self.rng,
                         range(obs.hand_size + 1))
             policy = PopulationPolicy(kinds, self.rng, self.react)
             for bid in options:
@@ -154,6 +190,7 @@ class SimulationBot(HeuristicBot):
                 playout(state, policy)
                 counts[bid][state.tricks_won[obs.seat]] += 1
 
+        self.last_bid_samples = total
         return {b: [c / total for c in tally] for b, tally in counts.items()}
 
     def bid(self, obs):

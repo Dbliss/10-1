@@ -1,0 +1,53 @@
+{
+  "start": "ohhell/models/bowers",
+  "settings": {
+    "start": "ohhell/models/bowers",
+    "out": "runs/selfplay/bowers",
+    "iterations": 4,
+    "rounds": 150000,
+    "epochs": 4,
+    "model_share": 0.6,
+    "epsilon": 0.05,
+    "seed": 2,
+    "eval_games": 300,
+    "workers": 19
+  },
+  "iterations": [
+    {
+      "iteration": 1,
+      "folder": "runs/selfplay/bowers/iter1",
+      "seed": 2001,
+      "edge_vs_start": 18.741666666666667,
+      "interval": 3.7579963499131566,
+      "games": 300,
+      "seconds": 638
+    },
+    {
+      "iteration": 2,
+      "folder": "runs/selfplay/bowers/iter2",
+      "seed": 2002,
+      "edge_vs_start": 22.108333333333334,
+      "interval": 3.912948086068364,
+      "games": 300,
+      "seconds": 393
+    },
+    {
+      "iteration": 3,
+      "folder": "runs/selfplay/bowers/iter3",
+      "seed": 2003,
+      "edge_vs_start": 22.8,
+      "interval": 3.78470703254361,
+      "games": 300,
+      "seconds": 518
+    },
+    {
+      "iteration": 4,
+      "folder": "runs/selfplay/bowers/iter4",
+      "seed": 2004,
+      "edge_vs_start": 23.5,
+      "interval": 3.874947347432409,
+      "games": 300,
+      "seconds": 466
+    }
+  ]
+}

@@ -4,6 +4,10 @@ export interface Card {
   id: string;
   suit: Suit;
   rank: string;
+  /** The suit the card follows this round: the left bower plays as a trump. */
+  plays_as: Suit;
+  /** Strength within plays_as: 0 for a two up to 12 for an Ace, 13 and 14 for the bowers. */
+  power: number;
 }
 
 export interface Player {

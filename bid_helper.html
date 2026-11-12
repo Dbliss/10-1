@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bid Helper</title>
+<style>
+  :root {
+    --bg: #0d2a4a; --panel: #133a63; --line: #24507f; --text: #eef3f9; --muted: #9db4cf;
+    --btn: #1c4775; --btn-hover: #255a91; --on: #f2c14e; --on-text: #1a1a1a;
+    --red: #ff7b7b; --good: #4ecb8f; --bad: #e46a6a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 14px; }
+  .sub a { color: var(--muted); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            padding: 12px; margin-bottom: 12px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+       margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  h2 small { text-transform: none; letter-spacing: 0; font-weight: normal; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .row + .row { margin-top: 6px; }
+  button { font: inherit; color: var(--text); background: var(--btn); border: 1px solid var(--line);
+           border-radius: 6px; padding: 6px 10px; cursor: pointer; min-width: 38px; }
+  button:hover:not(:disabled) { background: var(--btn-hover); }
+  button.on { background: var(--on); color: var(--on-text); border-color: var(--on); font-weight: 600; }
+  button:disabled { opacity: .35; cursor: default; }
+  button.link { background: none; border: none; color: var(--muted); text-decoration: underline;
+                padding: 2px 4px; min-width: 0; }
+  .suit-label { width: 26px; font-size: 20px; text-align: center; }
+  .red { color: var(--red); }
+  button.on .red, button.on.red { color: #b00020; }
+  .hand-grid button { min-width: 0; flex: 1 1 0; padding: 6px 0; }
+  .hand-grid .row { flex-wrap: nowrap; gap: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
+  .chip { background: var(--btn); border: 1px solid var(--line); border-radius: 14px; padding: 3px 10px; }
+  .chip b { color: var(--on); }
+  .hint { color: var(--muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: normal; font-size: 13px; }
+  tr.best td { background: rgba(242, 193, 78, .14); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; min-width: 60px; }
+  .bar span { display: block; height: 100%; background: var(--good); }
+  .pos { color: var(--good); } .neg { color: var(--bad); }
+  .error { color: var(--bad); }
+  .rec { font-size: 18px; margin-bottom: 8px; }
+  .rec b { color: var(--on); font-size: 24px; }
+  label.check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  @media (max-width: 520px) {
+    .hand-grid button { font-size: 13px; }
+    .hand-grid .row { gap: 2px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bid Helper</h1>
+  <p class="sub">Enter your hand, trump and the bids so far to get a bid recommendation. <a href="/">Back to the game</a></p>
+
+  <section>
+    <h2>Players</h2>
+    <div class="row" id="players"></div>
+  </section>
+
+  <section>
+    <h2>Trump <small id="trump-note" class="hint"></small></h2>
+    <div class="row" id="trump-suits"></div>
+    <div class="row" id="trump-ranks"></div>
+  </section>
+
+  <section>
+    <h2>Your hand <small><span id="hand-count" class="hint"></span>
+      <label class="check"><input type="checkbox" id="blind"> Blind round</label>
+      <button class="link" id="clear-hand">Clear</button></small></h2>
+    <div class="hand-grid" id="hand"></div>
+  </section>
+
+  <section>
+    <h2>Bids before yours <small><button class="link" id="undo-bid">Undo</button>
+      <button class="link" id="clear-bids">Clear</button></small></h2>
+    <div class="chips" id="bid-chips"></div>
+    <div class="row" id="bid-pad" style="margin-top:8px"></div>
+    <p class="hint" id="seat-note" style="margin:8px 0 0"></p>
+  </section>
+
+  <section>
+    <h2>Recommendation <small id="status" class="hint"></small></h2>
+    <div id="result"><p class="hint">Pick your cards and a trump suit.</p></div>
+  </section>
+</main>
+
+<script>
+const SUITS = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
+const GLYPH = { Spades: '♠', Hearts: '♥', Clubs: '♣', Diamonds: '♦' };
+const RED = new Set(['Hearts', 'Diamonds']);
+const RANKS = ['Ace', 'King', 'Queen', 'Jack', '10', '9', '8', '7', '6', '5', '4', '3', '2'];
+const SHORT = { Ace: 'A', King: 'K', Queen: 'Q', Jack: 'J' };
+const short = (rank) => SHORT[rank] || rank;
+const id = (rank, suit) => `${rank}_of_${suit}`;
+
+function load(key, fallback) {
+  try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
+  catch { return fallback; }
+}
+function save(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
+
+const state = {
+  players: load('bidHelper.players', 4),
+  trumpSuit: null,
+  trumpRank: null,   // null: only the suit is known
+  hand: new Set(),
+  blind: false,
+  bids: [],
+};
+
+const $ = (sel) => document.querySelector(sel);
+function el(tag, props = {}, children = []) {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const child of [].concat(children)) node.append(child);
+  return node;
+}
+function suitSpan(suit) { return el('span', { className: RED.has(suit) ? 'red' : '', textContent: GLYPH[suit] }); }
+
+const maxHand = () => Math.min(10, Math.floor(51 / state.players));
+const handSize = () => (state.blind ? 1 : state.hand.size);
+const trumpId = () => (state.trumpRank ? id(state.trumpRank, state.trumpSuit) : null);
+
+function render() {
+  // Players
+  const players = $('#players'); players.replaceChildren();
+  for (let n = 2; n <= 8; n++) {
+    players.append(el('button', { className: n === state.players ? 'on' : '', textContent: n,
+      onclick: () => { state.players = n; save('bidHelper.players', n);
+        state.bids = state.bids.slice(0, n - 1); update(); } }));
+  }
+
+  // Trump suit and optional turned-up rank
+  const suits = $('#trump-suits'); suits.replaceChildren();
+  for (const suit of SUITS) {
+    suits.append(el('button', { className: suit === state.trumpSuit ? 'on' : '',
+      onclick: () => { if (state.trumpSuit !== suit) state.trumpRank = null;
+        state.trumpSuit = suit; update(); } }, [suitSpan(suit), ' ' + suit]));
+  }
+  const ranks = $('#trump-ranks'); ranks.replaceChildren();
+  if (state.trumpSuit) {
+    ranks.append(el('span', { className: 'hint', textContent: 'Turned-up card:' }));
+    for (const rank of RANKS) {
+      const cid = id(rank, state.trumpSuit);
+      ranks.append(el('button', { className: rank === state.trumpRank ? 'on' : '', textContent: short(rank),
+        disabled: state.hand.has(cid),
+        onclick: () => { state.trumpRank = state.trumpRank === rank ? null : rank; update(); } }));
+    }
+  }
+  $('#trump-note').textContent = state.trumpSuit && !state.trumpRank
+    ? 'Turned-up card unknown: a random non-Jack is assumed' : '';
+
+  // Hand grid, trump suit first
+  const order = state.trumpSuit ? [state.trumpSuit, ...SUITS.filter((s) => s !== state.trumpSuit)] : SUITS;
+  const hand = $('#hand'); hand.replaceChildren();
+  for (const suit of order) {
+    const row = el('div', { className: 'row' }, [el('span', { className: 'suit-label' }, suitSpan(suit))]);
+    for (const rank of RANKS) {
+      const cid = id(rank, suit);
+      const full = !state.hand.has(cid) && state.hand.size >= maxHand();
+      row.append(el('button', { className: state.hand.has(cid) ? 'on' : '', textContent: short(rank),
+        disabled: state.blind || cid === trumpId() || full,
+        onclick: () => { state.hand.has(cid) ? state.hand.delete(cid) : state.hand.add(cid); update(); } }));
+    }
+    hand.append(row);
+  }
+  $('#hand-count').textContent = state.blind ? 'one hidden card ' : `${state.hand.size} card${state.hand.size === 1 ? '' : 's'} `;
+  $('#blind').checked = state.blind;
+
+  // Bids before yours
+  const chips = $('#bid-chips'); chips.replaceChildren();
+  if (!state.bids.length) chips.append(el('span', { className: 'hint', textContent: 'None: you bid first (left of the dealer).' }));
+  state.bids.forEach((b, i) => chips.append(el('span', { className: 'chip' }, [`P${i + 1}: `, el('b', { textContent: b })])));
+  const pad = $('#bid-pad'); pad.replaceChildren();
+  const full = state.bids.length >= state.players - 1;
+  for (let b = 0; b <= Math.max(handSize(), 1); b++) {
+    pad.append(el('button', { textContent: b, disabled: full,
+      onclick: () => { state.bids.push(b); update(); } }));
+  }
+  const sum = state.bids.reduce((a, b) => a + b, 0);
+  const pos = state.bids.length + 1;
+  $('#seat-note').textContent = `You bid ${pos}${['st','nd','rd'][pos - 1] || 'th'} of ${state.players}` +
+    (full ? ' (dealer)' : '') + (state.bids.length ? ` · ${sum} bid so far` : '') +
+    (handSize() ? ` of ${handSize()} trick${handSize() === 1 ? '' : 's'}` : '') + '.';
+}
+
+let timer = null, requestNo = 0;
+function update() {
+  render();
+  clearTimeout(timer);
+  timer = setTimeout(fetchAdvice, 250);
+}
+
+async function fetchAdvice() {
+  const result = $('#result'), status = $('#status');
+  if (!state.trumpSuit || (!state.blind && !state.hand.size)) {
+    result.replaceChildren(el('p', { className: 'hint', textContent: 'Pick your cards and a trump suit.' }));
+    status.textContent = '';
+    return;
+  }
+  const mine = ++requestNo;
+  status.textContent = 'Thinking…';
+  try {
+    const response = await fetch('/api/bid-helper', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ players: state.players, hand: [...state.hand], blind: state.blind,
+        trump: trumpId() || state.trumpSuit, bids: state.bids }),
+    });
+    const data = await response.json();
+    if (mine !== requestNo) return;
+    status.textContent = '';
+    if (!response.ok) { result.replaceChildren(el('p', { className: 'error', textContent: data.error || 'Request failed.' })); return; }
+    showResult(data);
+  } catch (err) {
+    if (mine !== requestNo) return;
+    status.textContent = '';
+    result.replaceChildren(el('p', { className: 'error', textContent: 'Could not reach the server.' }));
+  }
+}
+
+function showResult(data) {
+  const best = data.options.find((o) => o.bid === data.recommended);
+  const rows = data.options.map((o) => el('tr', { className: o.bid === data.recommended ? 'best' : '' }, [
+    el('td', { className: 'num', textContent: o.bid }),
+    el('td', { className: 'num', textContent: `${Math.round(o.make_chance * 100)}%` }),
+    el('td', {}, el('div', { className: 'bar' }, el('span', { style: `width:${o.make_chance * 100}%` }))),
+    el('td', { className: 'num ' + (o.expected_points > 0 ? 'pos' : o.expected_points < 0 ? 'neg' : ''),
+      textContent: (o.expected_points > 0 ? '+' : '') + o.expected_points.toFixed(1) }),
+  ]));
+  const notes = [];
+  if (data.quick_estimate !== null) {
+    notes.push(`Quick estimate ${data.quick_estimate.toFixed(1)} tricks` +
+      (data.certain_tricks ? `, ${data.certain_tricks} certain (top trumps).` : '.'));
+  }
+  if (data.forbidden_bid !== null) notes.push(`As dealer you may not bid ${data.forbidden_bid}.`);
+  notes.push('Bids not listed were judged too unlikely to consider.');
+  $('#result').replaceChildren(
+    el('div', { className: 'rec' }, ['Bid ', el('b', { textContent: data.recommended }),
+      ` · ${Math.round(best.make_chance * 100)}% to make exactly`]),
+    el('table', {}, [
+      el('thead', {}, el('tr', {}, ['Bid', 'Chance to make', '', 'Avg points'].map((t) => el('th', { textContent: t })))),
+      el('tbody', {}, rows),
+    ]),
+    el('p', { className: 'hint', textContent: notes.join(' ') }),
+  );
+}
+
+$('#blind').onchange = (e) => { state.blind = e.target.checked; if (state.blind) state.hand.clear();
+  state.bids = state.bids.map((b) => Math.min(b, 1)); update(); };
+$('#clear-hand').onclick = () => { state.hand.clear(); update(); };
+$('#undo-bid').onclick = () => { state.bids.pop(); update(); };
+$('#clear-bids').onclick = () => { state.bids = []; update(); };
+update();
+</script>
+</body>
+</html>

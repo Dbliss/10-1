@@ -88,6 +88,14 @@
   .history h2 { margin: 0 0 6px; font-size: 14px; font-weight: 650; }
   .history .entry.head { color: var(--muted); font-size: 12px; }
   .history .entry { display: grid; grid-template-columns: minmax(180px, 1fr) 110px 150px 90px; gap: 12px; padding: 4px 0; font-variant-numeric: tabular-nums; }
+  .rounds { overflow-x: auto; }
+  .rounds table { width: 100%; min-width: 760px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .rounds th { color: var(--muted); font-size: 12px; font-weight: 400; text-align: right; padding: 4px 8px; }
+  .rounds td { text-align: right; padding: 4px 8px; border-top: 1px solid var(--line); }
+  .rounds th:first-child, .rounds td:first-child { text-align: left; padding-left: 0; }
+  .rounds td .pm { display: inline; margin-left: 4px; }
+  .rounds details { margin-top: 10px; }
+  .rounds summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   .note { margin: 12px 2px 0; color: var(--muted); font-size: 12px; }
 
   #tip {
@@ -146,6 +154,15 @@
   <div class="board history tables">
     <h2>Candidate's edge by table size</h2>
     <div id="tables"></div>
+  </div>
+  <div class="board history rounds">
+    <h2>By round size</h2>
+    <div id="rounds"></div>
+    <p class="note" id="roundsNote"></p>
+    <details>
+      <summary>Every player, by round size</summary>
+      <div id="roundsAll"></div>
+    </details>
   </div>
   <div class="board history" id="historyBox" hidden>
     <h2>Earlier tests</h2>
@@ -284,22 +301,22 @@
     $("elapsed").textContent = duration(s.elapsed);
     $("rate").textContent = s.rate ? `${(s.rate * 60).toFixed(0)}/min` : "â€¦";
     $("bar").style.width = `${s.games / s.total * 100}%`;
-    const word = { better: "Better", worse: "Worse", "no gain": "No real gain", inconclusive: "Inconclusive", unconfirmed: "Didn't repeat" };
+    const word = { better: "Better", worse: "Worse", "no gain": "No real gain", inconclusive: "Inconclusive", unconfirmed: "Didn't repeat", reference: "Reference only" };
     const candidate = s.players[0].name, current = s.players[s.baseline].name;
     const candidateTag = candidate.split(" ")[0], currentTag = current.split(" ")[0];
-    $("verdict").textContent = s.verdict ? word[s.verdict] : s.stage === "repeat" ? "Repeating" : "Still testing";
-    $("verdict").className = "value small " + (s.verdict === "better" ? "gain" : s.verdict ? "loss" : "");
+    $("verdict").textContent = s.verdict ? word[s.verdict] : s.reference ? "Reference, no verdict" : s.stage === "repeat" ? "Repeating" : "Still testing";
+    $("verdict").className = "value small " + (s.verdict === "better" ? "gain" : s.verdict && s.verdict !== "reference" ? "loss" : "");
     $("verdictLabel").textContent = `Verdict on ${candidate}`;
     $("turnLabel").textContent = `Time per turn, ${candidateTag} / ${currentTag}`;
     $("winLabel").textContent = `Win share, ${candidateTag} minus ${currentTag}`;
     $("edgeHead").textContent = `vs ${current}`;
     $("winEdge").textContent = s.win_edge === null ? "â€¦"
       : `${s.win_edge > 0 ? "+" : ""}${(s.win_edge * 100).toFixed(1)}%` + (s.win_edge_interval === null ? "" : ` Â± ${(s.win_edge_interval * 100).toFixed(1)}`);
-    $("check").textContent = s.finished || s.stage === "repeat" ? "Done" : `at ${s.next_check.toLocaleString()} sets`;
+    $("check").textContent = s.reference ? "None (reference)" : s.finished || s.stage === "repeat" ? "Done" : `at ${s.next_check.toLocaleString()} sets`;
     $("turn").textContent = s.players[0].ms_per_turn === null ? `limit ${s.time_ms} ms`
       : `${s.players[0].ms_per_turn.toFixed(2)} / ${s.players[s.baseline].ms_per_turn.toFixed(2)} ms`;
     $("subject").textContent = `${candidate} vs ${current}`;
-    $("note").textContent = `The Â± figures are 95% margins of error. ${candidate}'s margin is wider early on because the run may stop at any of its ten checks. Wins is the share of games won at the tables that player sat at. The vertical line in each curve marks that player's average, and the fainter line across all curves marks ${current}'s average.`;
+    $("note").textContent = `The Â± figures are 95% margins of error. ${s.reference ? `This is a reference run: ${candidate} has no time limit, so it cannot be promoted, and its margin is a plain 95% interval.` : `${candidate}'s margin is wider early on because the run may stop at any of its ten checks.`} Wins is the share of games won at the tables that player sat at. The vertical line in each curve marks that player's average, and the fainter line across all curves marks ${current}'s average.`;
     $("repeat").hidden = s.stage !== "repeat";
     if (s.stage === "repeat") {
       $("repeat").textContent = `${candidate} looked better after ${s.sets.toLocaleString()} sets, so it ${s.finished ? "repeated" : "is repeating"} on unseen deals: `
@@ -311,9 +328,10 @@
     $("tables").innerHTML = `<div class="entry head"><span>Table</span><span>Sets</span><span>Edge</span><span>Hand</span></div>`
       + s.tables.map((t) => `<div class="entry"><span>${t.players} players</span><span>${t.sets.toLocaleString()}</span>`
       + `<span>${signed(t.edge)}${t.margin === null ? "" : ` Â± ${t.margin.toFixed(1)}`}</span><span>${t.cards} cards</span></div>`).join("");
+    renderRounds(s, candidateTag, currentTag);
     $("historyBox").hidden = !s.history.length;
     $("history").innerHTML = s.history.map((h) => `<div class="entry"><span>${h.label}</span>`
-      + `<span class="${h.verdict === "better" ? "gain" : "loss"}">${word[h.verdict]}</span>`
+      + `<span class="${h.verdict === "better" ? "gain" : h.verdict === "reference" ? "" : "loss"}">${word[h.verdict] ?? h.verdict}</span>`
       + `<span>${signed(h.edge)} Â± ${h.margin.toFixed(1)} points</span><span>${h.sets} sets</span></div>`).join("");
 
     // Rank by the paired edge: raw averages mix table sizes differently per player.
@@ -341,6 +359,42 @@
     drawCurves(s.players, s.baseline);
   }
 
+  const pct = (v) => v === null || v === undefined ? "…" : `${(v * 100).toFixed(1)}%`;
+  const signedPct = (v) => v === null || v === undefined ? "…" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+  const handName = (cards) => cards === 0 ? "Blind" : `${cards} card${cards === 1 ? "" : "s"}`;
+  const edgeClass = (v, m) => v === null || m === null || Math.abs(v) <= m ? "" : v > 0 ? "gain" : "loss";
+
+  function renderRounds(s, candidateTag, currentTag) {
+    const rounds = s.rounds || [];
+    if (!rounds.length) {
+      $("rounds").innerHTML = `<p class="note">${s.games ? "This run was saved before round breakdowns were recorded." : "Waiting for the first set…"}</p>`;
+      $("roundsAll").innerHTML = "";
+      $("roundsNote").textContent = "";
+      return;
+    }
+    const c = 0, b = s.baseline;
+    $("rounds").innerHTML = `<table><thead><tr><th>Round</th><th>Sets</th>`
+      + `<th>Avg ${candidateTag}</th><th>Avg ${currentTag}</th><th>Points edge</th>`
+      + `<th>Won ${candidateTag}</th><th>Won ${currentTag}</th><th>Win edge</th></tr></thead><tbody>`
+      + rounds.map((r) => `<tr><td>${handName(r.cards)}</td><td>${r.sets.toLocaleString()}</td>`
+        + `<td>${text(r.mean[c], 2)}</td><td>${text(r.mean[b], 2)}</td>`
+        + `<td class="${edgeClass(r.edge, r.margin)}">${r.edge === null ? "…" : (r.edge > 0 ? "+" : "") + r.edge.toFixed(2)}`
+        + `${r.margin === null ? "" : `<span class="pm">± ${r.margin.toFixed(2)}</span>`}</td>`
+        + `<td>${pct(r.win_share[c])}</td><td>${pct(r.win_share[b])}</td>`
+        + `<td class="${edgeClass(r.win_edge, r.win_margin)}">${signedPct(r.win_edge)}`
+        + `${r.win_margin === null ? "" : `<span class="pm">± ${(r.win_margin * 100).toFixed(1)}</span>`}</td></tr>`).join("")
+      + `</tbody></table>`;
+    $("roundsNote").textContent = `Averages are points per round of that size; each size is counted on the way down and the way back up. `
+      + `A round is won by the top score in it, with ties split. The edges compare ${candidateTag} and ${currentTag} on the same deals and seats, so they are the fair comparison; `
+      + `raw averages for different players mix different table sizes. Bigger hands only occur at smaller tables (9 and 10 cards at 3 to 5 players), so they have fewer sets.`;
+    $("roundsAll").innerHTML = `<table><thead><tr><th>Player</th>`
+      + rounds.map((r) => `<th>${handName(r.cards)}</th>`).join("") + `</tr></thead><tbody>`
+      + s.players.map((p, i) => `<tr><td>${p.name}</td>`
+        + rounds.map((r) => `<td>${text(r.mean[i], 2)}<span class="pm">${pct(r.win_share[i])}</span></td>`).join("")
+        + `</tr>`).join("")
+      + `</tbody></table><p class="note">Each cell is average points per round, then the share of those rounds won.</p>`;
+  }
+
   async function poll() {
     let finished = false;
     try {
@@ -349,7 +403,11 @@
       render(stats);
       finished = stats.finished;
       $("sub").classList.remove("warn");
-      $("sub").textContent = `${stats.players[0].name} against ${stats.players[stats.baseline].name} at tables of 3 to 8 players, ${stats.time_ms} ms per turn for every simulating bot. ${stats.round_format === "down-blind-up" ? "Hands go down to 1, blind 0, then back to the starting size. " : ""}Every set is one preset game played from every seat. Checks every ${Math.floor(stats.max_sets / 10).toLocaleString()} sets.`;
+      const timing = stats.reference
+        ? `${stats.players[0].name} has no time limit; every other simulating bot gets ${stats.time_ms} ms per turn. Reference comparison only: no checks, no verdict, no promotion.`
+        : `${stats.time_ms} ms per turn for every simulating bot.`;
+      const checks = stats.reference ? "" : ` Checks every ${Math.floor(stats.max_sets / 10).toLocaleString()} sets.`;
+      $("sub").textContent = `${stats.players[0].name} against ${stats.players[stats.baseline].name} at tables of 3 to 8 players, ${timing} ${stats.round_format === "down-blind-up" ? "Hands go down to 1, blind 0, then back to the starting size. " : ""}Every set is one preset game played from every seat.${checks}`;
     } catch {
       $("sub").classList.add("warn");
       $("sub").textContent = "Lost contact with the tournament script. Showing the last results received.";

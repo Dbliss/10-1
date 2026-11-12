@@ -6,7 +6,10 @@ simulations use to finish a hand, so it has to be fast.
 
 import math
 
-from ..cards import ABOVE, RANK_OF, SUIT_MASK, SUIT_OF, cards_in, highest, lowest
+from ..cards import (
+    EFFECTIVE_SUIT, OUTRANKS, POWER, RANK_OF, SUIT_CARDS, SUIT_OF, bottom, cards_in,
+    highest, lowest, top,
+)
 from ..engine import NO_SUIT
 from .base import Bot
 
@@ -22,23 +25,26 @@ def _poisson_at_most(k, mean):
 def card_win_probs(hand, trump_card, n, hand_size, leads_first=False):
     """Estimate, card by card, the chance each card in a hand takes a trick."""
     trump = SUIT_OF[trump_card]
+    suits = SUIT_CARDS[trump]
+    outranks = OUTRANKS[trump]
+    power = POWER[trump]
     seen = hand | (1 << trump_card)
     unseen = 51 - hand_size
     miss = max(0.0, 1.0 - (n - 1) * hand_size / unseen)
-    trump_held = (hand & SUIT_MASK[trump]).bit_count()
+    trump_held = (hand & suits[trump]).bit_count()
     short_sides = sum(
-        (hand & SUIT_MASK[s]).bit_count() <= 1 for s in range(4) if s != trump)
-    other_trumps = 13 - trump_held - 1
+        (hand & suits[s]).bit_count() <= 1 for s in range(4) if s != trump)
+    # The turned-up card is always a trump: the left bower is never turned.
+    other_trumps = suits[trump].bit_count() - trump_held - 1
     ruff_rate = hand_size * other_trumps / unseen
     opponent_has_trump = 1.0 - math.exp(-ruff_rate)
 
     probs = []
     for suit in range(4):
-        cards = cards_in(hand & SUIT_MASK[suit])
-        cards.reverse()  # highest first
+        cards = sorted(cards_in(hand & suits[suit]), key=power.__getitem__, reverse=True)
         length = len(cards)
         for position, card in enumerate(cards):
-            higher = (ABOVE[card] & ~seen).bit_count()
+            higher = (outranks[card] & ~seen).bit_count()
             clear = miss ** higher
             if suit == trump:
                 ruff = 0.0
@@ -46,7 +52,7 @@ def card_win_probs(hand, trump_card, n, hand_size, leads_first=False):
                     ruff = min(0.55, 0.10 * (trump_held - 1) + 0.12 * short_sides)
                 probs.append(clear + (1.0 - clear) * ruff)
                 continue
-            outstanding = 13 - length - (SUIT_OF[trump_card] == suit)
+            outstanding = suits[suit].bit_count() - length
             opponent_length = hand_size * outstanding / unseen
             short = _poisson_at_most(position, opponent_length)
             safe = (1.0 - short * opponent_has_trump) ** (n - 1)
@@ -81,68 +87,71 @@ def best_bid_for(dist, options, scoring):
     return max(options, key=value)
 
 
-def _is_boss(card, seen):
-    return not (ABOVE[card] & ~seen)
+def _is_boss(card, seen, trump):
+    return not (OUTRANKS[trump][card] & ~seen)
 
 
 def _lead(hand, trump, seen, want):
-    trumps = hand & SUIT_MASK[trump]
+    suits = SUIT_CARDS[trump]
+    trumps = hand & suits[trump]
     if want:
         if trumps:
-            top = highest(trumps)
-            if _is_boss(top, seen) and trumps.bit_count() >= 2:
-                return top
+            best_trump = top(trumps, trump)
+            if _is_boss(best_trump, seen, trump) and trumps.bit_count() >= 2:
+                return best_trump
         best = None
         for suit in range(4):
-            cards = hand & SUIT_MASK[suit]
+            cards = hand & suits[suit]
             if cards and suit != trump:
-                top = highest(cards)
-                if _is_boss(top, seen) and (best is None or RANK_OF[top] > RANK_OF[best]):
-                    best = top
+                high = highest(cards)
+                if (_is_boss(high, seen, trump)
+                        and (best is None or RANK_OF[high] > RANK_OF[best])):
+                    best = high
         if best is not None:
             return best
-        if trumps and _is_boss(highest(trumps), seen):
-            return highest(trumps)
+        if trumps and _is_boss(top(trumps, trump), seen, trump):
+            return top(trumps, trump)
         # No sure winner. Lead low from the shortest side suit to set up a ruff.
         shortest = None
         for suit in range(4):
-            cards = hand & SUIT_MASK[suit]
+            cards = hand & suits[suit]
             if cards and suit != trump:
                 if shortest is None or cards.bit_count() < shortest.bit_count():
                     shortest = cards
-        return lowest(shortest if shortest else trumps)
+        return lowest(shortest) if shortest else bottom(trumps, trump)
 
     # Trying to lose: lead whatever has the most unseen cards above it.
     best = None
     best_score = -99
     for suit in range(4):
-        cards = hand & SUIT_MASK[suit]
+        cards = hand & suits[suit]
         if cards:
-            card = lowest(cards)
-            score = (ABOVE[card] & ~seen).bit_count() - (3 if suit == trump else 0)
+            card = bottom(cards, trump)
+            score = (OUTRANKS[trump][card] & ~seen).bit_count() - (3 if suit == trump else 0)
             if score > best_score:
                 best, best_score = card, score
     return best
 
 
-def _highest_rank(mask):
-    """The card of highest rank across suits, preferring the shorter suit."""
+def _highest_rank(mask, trump):
+    """The card of highest rank across side suits, preferring the shorter suit."""
     best = None
     best_key = None
     for suit in range(4):
-        cards = mask & SUIT_MASK[suit]
+        cards = mask & SUIT_CARDS[trump][suit]
         if cards:
-            top = highest(cards)
-            key = (RANK_OF[top], -cards.bit_count())
+            high = highest(cards)
+            key = (RANK_OF[high], -cards.bit_count())
             if best_key is None or key > best_key:
-                best, best_key = top, key
+                best, best_key = high, key
     return best
 
 
-def _lowest_rank(mask):
+def _lowest_rank(mask, trump):
+    """The card of lowest rank across side suits."""
     best = None
     for suit in range(4):
-        cards = mask & SUIT_MASK[suit]
+        cards = mask & SUIT_CARDS[trump][suit]
         if cards:
             low = lowest(cards)
             if best is None or RANK_OF[low] < RANK_OF[best]:
@@ -181,45 +190,48 @@ def choose_card(hand, trump, lead_suit, best_card, trick_size, n, seen, need,
         return _lead(hand, trump, seen, want)
 
     last = trick_size == n - 1
-    following = hand & SUIT_MASK[lead_suit]
-    best_suit = SUIT_OF[best_card]
+    suits = SUIT_CARDS[trump]
+    outranks = OUTRANKS[trump]
+    following = hand & suits[lead_suit]
+    best_suit = EFFECTIVE_SUIT[trump][best_card]
 
     if following:
-        winners = following & ABOVE[best_card] if best_suit == lead_suit else 0
+        winners = following & outranks[best_card] if best_suit == lead_suit else 0
         losers = following ^ winners
         if want:
             if not winners:
-                return lowest(losers)
+                return bottom(losers, trump)
             if last or not behind_wants:  # nobody left will fight for this trick
-                return lowest(winners)
-            top = highest(winners)
-            if _is_boss(top, seen) or trick_size * 2 >= n or not losers or scarce:
-                return top
-            return lowest(losers)
+                return bottom(winners, trump)
+            high = top(winners, trump)
+            if _is_boss(high, seen, trump) or trick_size * 2 >= n or not losers or scarce:
+                return high
+            return bottom(losers, trump)
         if losers:
-            return highest(losers)
-        return highest(winners) if last or not behind_wants else lowest(winners)
+            return top(losers, trump)
+        return (top(winners, trump) if last or not behind_wants
+                else bottom(winners, trump))
 
-    trumps = hand & SUIT_MASK[trump]
+    trumps = hand & suits[trump]
     sides = hand ^ trumps
     trumped = best_suit == trump
 
     if want:
         if trumps:
             if not trumped:
-                return lowest(trumps)
-            over = trumps & ABOVE[best_card]
+                return bottom(trumps, trump)
+            over = trumps & outranks[best_card]
             if over:
-                return lowest(over)
-        return _lowest_rank(sides) if sides else lowest(trumps)
+                return bottom(over, trump)
+        return _lowest_rank(sides, trump) if sides else bottom(trumps, trump)
 
     if trumped:
-        under = trumps & ~ABOVE[best_card]
+        under = trumps & ~outranks[best_card]
         if under:
-            return highest(under)
+            return top(under, trump)
     if sides:
-        return _highest_rank(sides)
-    return highest(trumps) if last else lowest(trumps)
+        return _highest_rank(sides, trump)
+    return top(trumps, trump) if last else bottom(trumps, trump)
 
 
 def state_card(state, react=False):

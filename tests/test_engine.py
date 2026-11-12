@@ -6,7 +6,7 @@ from ohhell.arena import deal_round, play_game
 from ohhell.belief import Belief, sample_world
 from ohhell.bots import make_bot
 from ohhell.cards import (
-    SUIT_OF, card_from_id, card_id, cards_in, make_card, mask_of,
+    EFFECTIVE_SUIT, card_from_id, card_id, cards_in, make_card, mask_of,
 )
 from ohhell.bots.heuristic import state_card
 from ohhell.engine import BIDDING, DONE, PLAYING, RoundState
@@ -108,6 +108,83 @@ def test_void_is_recorded_when_a_seat_fails_to_follow():
     assert state.voids[1] == 1 << CLUBS and state.voids[0] == 0
 
 
+# Bowers, with hearts as trump: the Jack of Hearts is the right bower and the
+# Jack of Diamonds, the other red Jack, is the left bower.
+RIGHT, LEFT = C(HEARTS, JACK), C(DIAMONDS, JACK)
+
+
+@pytest.mark.parametrize('plays,winner', [
+    ([C(HEARTS, ACE), RIGHT, C(HEARTS, KING), C(HEARTS, TWO)], 1),
+    ([C(HEARTS, ACE), LEFT, C(HEARTS, KING), C(HEARTS, TWO)], 1),
+    ([LEFT, C(HEARTS, ACE), RIGHT, C(HEARTS, TWO)], 2),
+    ([RIGHT, LEFT, C(HEARTS, ACE), C(HEARTS, KING)], 0),
+    # The left bower trumps a diamond lead rather than following it.
+    ([C(DIAMONDS, ACE), LEFT, C(DIAMONDS, KING), C(DIAMONDS, TWO)], 1),
+    # A Jack of a black suit ranks as an ordinary Jack.
+    ([C(CLUBS, 8), C(CLUBS, JACK), C(CLUBS, QUEEN), C(SPADES, JACK)], 2),
+])
+def test_bowers_top_the_trump_suit(plays, winner):
+    state = table([[c] for c in plays], C(HEARTS, FIVE))
+    bid_all(state, [0, 0, 0, 0])
+    for card in plays:
+        state.apply(card)
+    assert state.tricks_won[winner] == 1 and sum(state.tricks_won) == 1
+
+
+def test_left_bower_follows_trump_not_its_printed_suit():
+    hands = [[C(HEARTS, TWO), C(DIAMONDS, TWO)],
+             [LEFT, C(CLUBS, TWO)],
+             [C(DIAMONDS, THREE), C(SPADES, TWO)]]
+    state = table(hands, C(HEARTS, FIVE), dealer=2)
+    bid_all(state, [0, 0, 0])
+    state.apply(C(HEARTS, TWO))
+    # The only heart the seat holds is the left bower, so it must be played.
+    assert state.legal_actions() == [LEFT]
+
+    state = table(hands, C(HEARTS, FIVE), dealer=2)
+    bid_all(state, [0, 0, 0])
+    state.apply(C(DIAMONDS, TWO))
+    # Holding no diamond by effective suit, the seat may play anything.
+    assert state.legal_actions() == [C(CLUBS, TWO), LEFT]
+    state.apply(LEFT)
+    assert state.voids[1] == 1 << DIAMONDS
+    state.apply(C(DIAMONDS, THREE))
+    assert state.tricks_won == [0, 1, 0]
+
+
+def test_leading_the_left_bower_leads_trump():
+    state = table([[LEFT, C(CLUBS, TWO)], [C(DIAMONDS, ACE), C(HEARTS, TWO)]],
+                  C(HEARTS, FIVE), dealer=1)
+    bid_all(state, [0, 0])
+    state.apply(LEFT)
+    assert state.lead_suit == HEARTS
+    assert state.legal_actions() == [C(HEARTS, TWO)]
+
+
+def test_turned_up_right_bower_leaves_left_bower_on_top():
+    plays = [C(HEARTS, ACE), LEFT]
+    state = table([[c] for c in plays], RIGHT, dealer=1)
+    bid_all(state, [0, 0])
+    for card in plays:
+        state.apply(card)
+    assert state.tricks_won == [0, 1]
+
+
+def test_touching_trumps_include_the_bowers():
+    def moves(mine, other):
+        state = table([mine, other], C(HEARTS, TWO), dealer=1)
+        bid_all(state, [0, 0])
+        return distinct_moves(state)
+
+    spades = [C(SPADES, TWO), C(SPADES, THREE), C(SPADES, FOUR)]
+    # King, Ace and both bowers run unbroken, so they are a single move.
+    assert moves([C(HEARTS, KING), C(HEARTS, ACE), LEFT, RIGHT],
+                 [C(HEARTS, QUEEN)] + spades) == [RIGHT]
+    # An Ace in another hand splits the King from the bowers.
+    assert moves([C(HEARTS, KING), C(HEARTS, QUEEN), LEFT, RIGHT],
+                 [C(HEARTS, ACE)] + spades) == [C(HEARTS, KING), RIGHT]
+
+
 def mid_round(seed, players=4, hand_size=8, plays=13):
     rng = random.Random(seed)
     hands, trump = deal_round(rng, players, hand_size)
@@ -134,7 +211,7 @@ def test_sampled_worlds_respect_everything_known(seed, inference):
             assert not all_cards & hand
             all_cards |= hand
             for card in cards_in(hand):
-                assert not obs.voids[s] >> SUIT_OF[card] & 1
+                assert not obs.voids[s] >> EFFECTIVE_SUIT[obs.trump_suit][card] & 1
         assert not all_cards & obs.played
         assert not all_cards >> obs.trump_card & 1
 

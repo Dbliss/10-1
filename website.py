@@ -4,9 +4,11 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, send_from_directory
 
+from bid_helper import recommend
 from game import Game
 
 FRONTEND_DIST = Path(__file__).parent / 'frontend' / 'dist'
+BID_HELPER_PAGE = Path(__file__).parent / 'bid_helper.html'
 
 app = Flask(__name__, static_folder=None)
 
@@ -97,6 +99,24 @@ def advice():
     if result is None:
         return respond('It is not your turn.')
     return jsonify(result)
+
+
+@app.post('/api/bid-helper')
+def bid_helper():
+    """Recommend a bid for a hand entered by hand, outside any game."""
+    data = request.get_json(silent=True) or {}
+    try:
+        result = recommend(
+            data.get('players', 4), data.get('hand', []), data.get('trump', ''),
+            data.get('bids', []), blind=bool(data.get('blind')))
+    except (TypeError, ValueError) as err:
+        return respond(str(err))
+    return jsonify(result)
+
+
+@app.get('/bid')
+def bid_helper_page():
+    return send_from_directory(BID_HELPER_PAGE.parent, BID_HELPER_PAGE.name)
 
 
 @app.get('/', defaults={'path': 'index.html'})

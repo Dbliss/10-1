@@ -11,7 +11,15 @@ must then be repeated on deals the run has not seen before it counts.
     python -m ohhell.tournament "hybrid:field=previous,react=1" --label "Reactive rollouts"
     python -m ohhell.tournament SPEC --baseline SPEC --time-ms 2 --port 8766
 
-Then open http://localhost:8765/. Each result is saved in runs/gates/.
+Then open the Dashboard URL it prints (8765, or the next free port if another
+run is using it). Each result is saved in runs/gates/.
+
+``--reference`` instead measures a bot that is meant to use more time. Only
+the candidate runs without a time limit.
+There are no planned checks, no repeat and no verdict, so a reference run can
+never promote a bot; the margins are plain 95% intervals.
+
+    python -m ohhell.tournament "simulation:worlds=256" --reference --label "Untimed"
 """
 
 import argparse
@@ -21,6 +29,7 @@ import multiprocessing
 import os
 import random
 import re
+import socket
 import threading
 import time
 import zlib
@@ -86,16 +95,24 @@ def games_in(sets, first=0):
     return sum(table_size(first + index) for index in range(sets))
 
 
-def build_lobby(candidate, baseline, time_ms, label):
-    """Slot 0 is the candidate, slot 1 the current version, the rest the pool."""
+def build_lobby(candidate, baseline, time_ms, label, reference=False, candidate_time_ms=None):
+    """Slot 0 is the candidate, slot 1 the current version, the rest the pool.
+
+    A reference candidate keeps its own settings and has no time limit.
+    ``candidate_time_ms`` gives the candidate alone a different time per turn.
+    """
     limit = f',time_ms={time_ms}'
+    own_limit = limit if candidate_time_ms is None else f',time_ms={candidate_time_ms}'
     next_number = VERSIONS[-1].number + 1
     current = version_title(baseline, 'Baseline')
-    lobby = [
-        (version_title(candidate, f'v{next_number} {label}'), 'candidate',
-         extend(candidate, limit)),
-        (current, 'current', extend(baseline, limit)),
-    ]
+    if reference:
+        first = (f'{label} (reference, untimed)', 'candidate', candidate)
+    else:
+        title = version_title(candidate, f'v{next_number} {label}')
+        if candidate_time_ms is not None and candidate_time_ms != time_ms:
+            title += f' at {candidate_time_ms:g} ms'
+        first = (title, 'candidate', extend(candidate, own_limit))
+    lobby = [first, (current, 'current', extend(baseline, limit))]
     for lean, role, setting in LEANING_VERSIONS:
         lobby.append((f'{current}, {lean}', role, extend(extend(baseline, setting), limit)))
     return lobby + list(HUMAN_LIKE)
@@ -151,8 +168,9 @@ class Timed:
 def play_set(job):
     """Play one preset game once per seat.
 
-    Returns (index, lobby slots at the table, scores per game, clocks), with
-    scores and clocks in the order of the slots.
+    Returns (index, lobby slots at the table, scores per game, clocks, rounds),
+    with scores and clocks in the order of the slots. ``rounds`` holds, per game,
+    each round's points per slot in the order of ``rules.hand_sizes``.
     """
     index, number, specs = job
     players = table_size(index)
@@ -161,6 +179,7 @@ def play_set(job):
     members = [CANDIDATE, BASELINE] + rng.sample(range(BASELINE + 1, len(specs)), players - 2)
     rng.shuffle(members)  # so nobody always sits behind the same bot
     games = []
+    rounds = []
     clocks = [[0.0, 0, 0.0] for _ in members]
     for rotation in range(players):
         places = [(seat + rotation) % players for seat in range(players)]
@@ -170,12 +189,20 @@ def play_set(job):
                   clocks[place])
             for place in places
         ]
-        totals, _, _ = play_game(bots, rules, number)
+        played = []
+        totals, _, _ = play_game(bots, rules, number, rounds=played)
         scores = [0] * players
         for seat, place in enumerate(places):
             scores[place] = totals[seat]
         games.append(scores)
-    return index, members, games, clocks
+        by_place = []
+        for points in played:
+            row = [0] * players
+            for seat, place in enumerate(places):
+                row[place] = points[seat]
+            by_place.append(row)
+        rounds.append(by_place)
+    return index, members, games, clocks, rounds
 
 
 def win_shares(games):
@@ -188,6 +215,19 @@ def win_shares(games):
             if score == top:
                 shares[place] += 1.0 / winners
     return [share / len(games) for share in shares]
+
+
+def round_stats(members, rounds):
+    """Per hand size: (average points per place, win share per place) for one set.
+
+    A round is won by the top score in it; ties split the win.
+    """
+    sizes = rules_for(len(members)).hand_sizes
+    grouped = {}
+    for game in rounds:
+        for size, points in zip(sizes, game):
+            grouped.setdefault(size, []).append(points)
+    return {size: (set_means(rows), win_shares(rows)) for size, rows in grouped.items()}
 
 
 def set_means(games):
@@ -234,6 +274,9 @@ class Scoreboard:
         self.wins = [Running() for _ in lobby]
         self.win_edge = Running()
         self.tables = {players: Running() for players in PLAYER_SPLIT}
+        # hand size -> per-slot points per round, per-slot round win share,
+        # and the candidate's paired edge over the baseline per set
+        self.rounds = {}
         self.best = [None] * len(lobby)
         self.clocks = [[0.0, 0, 0.0] for _ in lobby]
         self.decision = None  # what the planned checks concluded
@@ -249,7 +292,17 @@ class Scoreboard:
     def sets(self):
         return self.edges[CANDIDATE].n
 
-    def add_set(self, members, games, clocks):
+    def _round_entry(self, size):
+        if size not in self.rounds:
+            self.rounds[size] = {
+                'points': [Running() for _ in self.lobby],
+                'wins': [Running() for _ in self.lobby],
+                'edge': Running(),
+                'win_edge': Running(),
+            }
+        return self.rounds[size]
+
+    def add_set(self, members, games, clocks, rounds=None):
         """Count a set from the main run. Returns a decision if this check reached one."""
         with self.lock:
             self.played += len(games)
@@ -268,7 +321,15 @@ class Scoreboard:
             new = members.index(CANDIDATE)
             self.win_edge.add(shares[new] - shares[place])
             self.tables[len(members)].add(means[new] - means[place])
-            if self.sets % self.look_every == 0:
+            if rounds:
+                for size, (points, round_wins) in round_stats(members, rounds).items():
+                    entry = self._round_entry(size)
+                    for at, slot in enumerate(members):
+                        entry['points'][slot].add(points[at])
+                        entry['wins'][slot].add(round_wins[at])
+                    entry['edge'].add(points[new] - points[place])
+                    entry['win_edge'].add(round_wins[new] - round_wins[place])
+            if self.sets % self.look_every == 0 and not self.args.reference:
                 edge = self.edges[CANDIDATE]
                 self.decision = decide(edge.mean, edge.sd, edge.n,
                                        self.args.smallest_gain, self.args.max_sets)
@@ -281,7 +342,7 @@ class Scoreboard:
             self.total += games_in(self.repeat_target, self.args.max_sets)
             return range(self.args.max_sets, self.args.max_sets + self.repeat_target)
 
-    def add_repeat(self, members, games, clocks):
+    def add_repeat(self, members, games, clocks, rounds=None):
         with self.lock:
             self.played += len(games)
             means = set_means(games)
@@ -296,13 +357,15 @@ class Scoreboard:
             if self.repeat_target:
                 passed = confirmed(self.repeat.mean, self.repeat.sd, self.repeat.n)
                 self.verdict = 'better' if passed else 'unconfirmed'
+            elif self.args.reference:
+                self.verdict = 'reference'
             else:
                 self.verdict = self.decision or 'inconclusive'
             self.finished_at = time.monotonic()
 
     def _margin(self, slot):
         edge = self.edges[slot]
-        if slot == CANDIDATE and edge.n > 1 and edge.sd:
+        if slot == CANDIDATE and edge.n > 1 and edge.sd and not self.args.reference:
             return planned_margin(edge.sd, edge.n, self.args.max_sets)
         return edge.interval
 
@@ -343,6 +406,8 @@ class Scoreboard:
                 },
                 'smallest_gain': self.args.smallest_gain,
                 'time_ms': self.args.time_ms,
+                'candidate_time_ms': getattr(self.args, 'candidate_time_ms', None),
+                'reference': self.args.reference,
                 'round_format': 'down-blind-up',
                 'baseline': BASELINE,
                 'history': self.history,
@@ -358,6 +423,19 @@ class Scoreboard:
                         'margin': self.tables[players].interval,
                     }
                     for players in sorted(self.tables)
+                ],
+                'rounds': [
+                    {
+                        'cards': size,
+                        'sets': entry['edge'].n,
+                        'edge': entry['edge'].mean if entry['edge'].n else None,
+                        'margin': entry['edge'].interval,
+                        'win_edge': entry['win_edge'].mean if entry['win_edge'].n else None,
+                        'win_margin': entry['win_edge'].interval,
+                        'mean': [r.mean if r.n else None for r in entry['points']],
+                        'win_share': [r.mean if r.n else None for r in entry['wins']],
+                    }
+                    for size, entry in sorted(self.rounds.items(), reverse=True)
                 ],
                 'players': [
                     {
@@ -401,9 +479,28 @@ def serve(board, port):
         def log_message(self, *args):
             pass
 
-    server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
+    # Several runs often share a machine. Python's server reuses addresses, and on
+    # Windows that lets a second run bind the same port silently, so the browser
+    # only ever reaches one of them. Claim the port exclusively, else try the next.
+    for candidate in range(port, port + 50):
+        try:
+            server = ExclusiveServer(('127.0.0.1', candidate), Handler)
+        except OSError:
+            continue
+        if candidate != port:
+            print(f'Port {port} is in use by another run; using {candidate}.', flush=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server
+    raise SystemExit(f'No free port between {port} and {port + 49}; pass --port.')
+
+
+class ExclusiveServer(ThreadingHTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 def load_previous(results):
@@ -413,7 +510,7 @@ def load_previous(results):
         with results.open() as lines:
             for line in lines:
                 record = json.loads(line)
-                if len(record) != 4:
+                if len(record) not in (4, 5):  # 4: saved before round breakdowns
                     raise SystemExit(f'{results.name} was saved by an older tournament format '
                                      'and cannot be resumed. Use a new --label.')
                 saved[record[0]] = record
@@ -421,11 +518,25 @@ def load_previous(results):
 
 
 def load_history():
-    """Earlier verdicts, oldest first, for the dashboard."""
+    """Earlier tournament verdicts; other reports are not dashboard history."""
     entries = []
     for path in sorted(GATES.glob('*.json'), key=lambda p: p.stat().st_mtime):
-        entry = json.loads(path.read_text())
-        new = entry['players'][0]
+        try:
+            entry = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        players = entry.get('players')
+        if not isinstance(players, list) or not players or not isinstance(players[0], dict):
+            continue
+        new = players[0]
+        if (not isinstance(entry.get('label'), str)
+                or not isinstance(entry.get('verdict'), str)
+                or not isinstance(entry.get('sets'), int)
+                or any(not isinstance(new.get(key), (int, float))
+                       or not math.isfinite(new[key]) for key in ('edge', 'edge_interval'))):
+            continue
         entries.append({
             'label': entry['label'], 'verdict': entry['verdict'], 'sets': entry['sets'],
             'edge': new['edge'], 'margin': new['edge_interval'],
@@ -436,17 +547,29 @@ def load_history():
 def check_run_config(path, args, specs):
     """Never mix saved sets from different rules, weights, or bot settings."""
     import hashlib
-    from .learn.models import MODEL_DIR
+    from .learn.models import model_paths
 
     weights = {}
     for spec in specs:
         name, _, settings = spec.partition(':')
-        if name not in ('net', 'hybrid'):
-            continue
         options = dict(pair.split('=', 1) for pair in settings.split(',') if '=' in pair)
-        folder = Path(options.get('models', MODEL_DIR))
-        for filename in ('bid.npz', 'play.npz'):
-            model = folder / filename
+        if options.get('estimate') in ('2', '3'):
+            from .estimate import COEFFICIENT_FILES
+            coefficients = COEFFICIENT_FILES[int(options['estimate'])]
+            weights[str(coefficients.resolve())] = hashlib.sha256(
+                coefficients.read_bytes()).hexdigest()
+        if name == 'ranges':
+            from .bots.ranges import TABLE_FILE
+            weights[str(TABLE_FILE.resolve())] = hashlib.sha256(
+                TABLE_FILE.read_bytes()).hexdigest()
+        if name not in ('net', 'hybrid', 'adaptive', 'evidence', 'planning', 'nnue', 'seatbids',
+                        'ranges'):
+            continue
+        if name == 'nnue':
+            from .learn.nnue import MODEL_DIR as NNUE_DIR
+            options.setdefault('play_models', options.get('models', str(NNUE_DIR)))
+        for model in model_paths(options.get('models'), options.get('bid_models'),
+                                 options.get('play_models')):
             weights[str(model.resolve())] = hashlib.sha256(model.read_bytes()).hexdigest()
     config = {
         'round_format': 'down-blind-up', 'specs': specs, 'seed': args.seed,
@@ -454,6 +577,8 @@ def check_run_config(path, args, specs):
         'time_ms': args.time_ms, 'player_split': list(PLAYER_SPLIT.items()),
         'max_hand': MAX_HAND, 'weights': weights,
     }
+    if getattr(args, 'reference', False):
+        config['reference'] = True  # absent otherwise, so earlier runs still resume
     # Normalize tuples so the saved JSON compares identically on resume.
     config = json.loads(json.dumps(config))
     if args.resume:
@@ -489,6 +614,11 @@ def play_stage(indices, add, saved, specs, board, output, args):
 
 
 def run(args):
+    from . import native
+    if not native.available:
+        raise SystemExit('The native simulator is not built for the current core.c, so every '
+                         'bot would run the slow Python code and ignore its time limit. '
+                         'Build it with: python -m ohhell.native')
     # Each worker only does small matrix sums, so one maths thread each is fastest.
     os.environ['OPENBLAS_NUM_THREADS'] = '1'
     os.environ['OMP_NUM_THREADS'] = '1'
@@ -497,13 +627,14 @@ def run(args):
     results = GATES / f'{slug}.jsonl'
     summary = GATES / f'{slug}.json'
 
-    lobby = build_lobby(args.candidate, args.baseline, args.time_ms, args.label)
+    lobby = build_lobby(args.candidate, args.baseline, args.time_ms, args.label, args.reference,
+                        args.candidate_time_ms)
     specs = [spec for _, _, spec in lobby]
     check_run_config(GATES / f'{slug}.meta', args, specs)
     board = Scoreboard(args, lobby, load_history())
     saved = load_previous(results) if args.resume else {}
     server = serve(board, args.port)
-    print(f'Dashboard: http://localhost:{args.port}/', flush=True)
+    print(f'Dashboard: http://localhost:{server.server_address[1]}/', flush=True)
 
     with results.open('a' if args.resume else 'w', buffering=1) as output:
         play_stage(range(args.max_sets), board.add_set, saved, specs, board, output, args)
@@ -528,6 +659,13 @@ def run(args):
         if table['edge'] is not None:
             print(f"  {table['players']} players: {table['edge']:+.2f} over {table['sets']} sets",
                   flush=True)
+    for hand in snapshot['rounds']:
+        if hand['edge'] is not None:
+            name = 'blind' if hand['cards'] == 0 else f"{hand['cards']:>2} cards"
+            print(f"  {name}: edge {hand['edge']:+.2f} points per round "
+                  f"(avg {hand['mean'][CANDIDATE]:.2f} vs {hand['mean'][BASELINE]:.2f}, "
+                  f"rounds won {hand['win_share'][CANDIDATE]:.1%} vs "
+                  f"{hand['win_share'][BASELINE]:.1%})", flush=True)
     for player in snapshot['players']:
         if player['mean'] is not None:
             print(f"  {player['name']:<36} avg {player['mean']:7.2f}   "
@@ -546,12 +684,13 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('candidate', nargs='?',
-                        default=f"{DEFAULT_SPEC},models={HERE / 'models' / 'candidate'}")
+    parser.add_argument('candidate', help='spec of the bot to test against the baseline')
     parser.add_argument('--baseline', default=DEFAULT_SPEC)
     parser.add_argument('--label', default=None,
                         help='the name of the candidate, used for its version and saved result')
     parser.add_argument('--time-ms', type=float, default=TIME_MS, help='time per turn for every bot')
+    parser.add_argument('--candidate-time-ms', type=float, default=None,
+                        help='time per turn for the candidate only (default: --time-ms)')
     parser.add_argument('--smallest-gain', type=float, default=1.0,
                         help='points per game below which a change is not worth having')
     parser.add_argument('--max-sets', type=int, default=1300,
@@ -562,6 +701,9 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--resume', action='store_true', help='keep results from the last run')
     parser.add_argument('--exit-when-done', action='store_true')
+    parser.add_argument('--reference', action='store_true',
+                        help='run the candidate without a time limit; reports the edge only, '
+                             'with no verdict and no promotion')
     args = parser.parse_args()
     args.label = args.label or re.sub(r'[^\w.-]+', '_', args.candidate)[:60]
     if args.seed is None:

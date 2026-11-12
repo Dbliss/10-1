@@ -11,7 +11,7 @@ function statusMessage(game: GameState): string {
     case "user_play":
       if (game.blind) return "Your turn. Play and reveal your hidden card.";
       if (!lead_suit) return "Your lead. Play any card.";
-      return hand.some((card) => card.suit === lead_suit)
+      return hand.some((card) => card.plays_as === lead_suit)
         ? `Your turn. Follow ${lead_suit.toLowerCase()}.`
         : `No ${lead_suit.toLowerCase()} left. Play any card.`;
     case "bot":

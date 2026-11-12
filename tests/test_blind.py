@@ -60,6 +60,25 @@ def test_blind_win_probabilities_sum_to_one(players, trump):
     assert lead + (players - 1) * other == pytest.approx(1)
 
 
+@pytest.mark.parametrize('trump', [0, 9, 25, 48])
+def test_blind_win_probability_matches_every_two_player_deal(trump):
+    """Exact odds agree with the engine, bowers included (9 is a Jack)."""
+    wins = deals = 0
+    deck = [card for card in range(52) if card != trump]
+    for lead in deck:
+        for other in deck:
+            if other == lead:
+                continue
+            state = RoundState(Rules(2, 1), [1 << lead, 1 << other], trump, 1, blind=True)
+            state.apply(0)
+            state.apply(0)
+            state.apply(BLIND_CARD)
+            state.apply(BLIND_CARD)
+            wins += state.tricks_won[0]
+            deals += 1
+    assert win_probability(2, trump, True) == pytest.approx(wins / deals)
+
+
 def test_blind_api_hides_card_ids_and_reveals_only_when_played():
     game = Game(4, 1, bot_spec='heuristic')
     game.round_number = 1  # second round is blind

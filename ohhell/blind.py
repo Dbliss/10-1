@@ -3,11 +3,7 @@
 from functools import lru_cache
 from math import comb
 
-from .cards import SUIT_OF
-
-
-def beats(card, best, trump):
-    return card > best if SUIT_OF[card] == SUIT_OF[best] else SUIT_OF[card] == trump
+from .cards import SUIT_OF, beats
 
 
 @lru_cache(maxsize=1024)

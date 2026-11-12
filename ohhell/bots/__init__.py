@@ -18,9 +18,13 @@ class Version:
 
 
 # Every promoted bot, oldest first. Add a line when a candidate wins the
-# tournament. The last one is the bot the game uses.
+# tournament. The last one is the bot the game uses. Only the current
+# version's weights are kept, in ohhell/models/; v1 (Hybrid, the same search
+# with Ace-high networks) is recorded in BOT_EXPERIMENTS.md.
 VERSIONS = (
-    Version(1, 'Hybrid', 'hybrid:field=previous,time_ms=2'),
+    # v1's hybrid search with networks retrained under bowers, then improved
+    # by self-play (ohhell/learn/selfplay.py). Passed main and confirmation.
+    Version(2, 'Self-play bowers nets', 'hybrid:field=previous,time_ms=2'),
 )
 DEFAULT_SPEC = VERSIONS[-1].spec
 
@@ -63,6 +67,36 @@ def _hybrid(**kwargs):
     return HybridBot(**kwargs)
 
 
+def _adaptive(**kwargs):
+    from .adaptive import AdaptiveBot
+    return AdaptiveBot(**kwargs)
+
+
+def _evidence(**kwargs):
+    from .evidence import EvidenceBot
+    return EvidenceBot(**kwargs)
+
+
+def _planning(**kwargs):
+    from .planning import PlanningBot
+    return PlanningBot(**kwargs)
+
+
+def _seat_bids(**kwargs):
+    from .seat_bids import SeatBidsBot
+    return SeatBidsBot(**kwargs)
+
+
+def _ranges(**kwargs):
+    from .ranges import RangesBot
+    return RangesBot(**kwargs)
+
+
+def _nnue(**kwargs):
+    from .nnue import NNUEBot
+    return NNUEBot(**kwargs)
+
+
 REGISTRY = {
     'random': RandomBot,
     'heuristic': HeuristicBot,
@@ -74,6 +108,12 @@ REGISTRY = {
     'inference': _inference,
     'net': _net,
     'hybrid': _hybrid,
+    'adaptive': _adaptive,
+    'evidence': _evidence,
+    'planning': _planning,
+    'nnue': _nnue,
+    'seatbids': _seat_bids,
+    'ranges': _ranges,
 }
 
 

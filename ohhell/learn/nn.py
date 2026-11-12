@@ -75,6 +75,25 @@ def softmax_loss(limits):
     return bind
 
 
+def soft_softmax_loss(limits):
+    """Cross-entropy against target distributions (rows of ``labels``), with
+    outputs above each row's limit masked out."""
+    def bind(labels, batch):
+        def loss(logits):
+            mask = np.arange(logits.shape[1]) > limits[batch][:, None]
+            logits = logits - logits.max(axis=1, keepdims=True)
+            logits[mask] = -1e4
+            exp = np.exp(logits)
+            probs = exp / exp.sum(axis=1, keepdims=True)
+            target = labels[batch]
+            value = -(target * np.log(probs + 1e-9)).sum(axis=1).mean()
+            grad = probs - target
+            grad[mask] = 0.0
+            return value, grad.astype(np.float32)
+        return loss
+    return bind
+
+
 def huber_loss():
     def bind(labels, batch):
         def loss(outputs):

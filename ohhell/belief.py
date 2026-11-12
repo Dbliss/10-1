@@ -9,18 +9,22 @@ evidence by importance resampling.
 
 import math
 
+from . import estimate as estimate_v2
 from .bots.heuristic import expected_tricks, state_card
-from .cards import FULL_DECK, SUIT_MASK, SUIT_OF, cards_in
+from .cards import EFFECTIVE_SUIT, FULL_DECK, cards_in
 from .engine import NO_BID, PLAYING, RoundState, legal_card_mask
 from .opponents import FIELDS, KINDS, SKILLED
 
 
-def _assign(cards, capacity, voids, rng):
-    """Deal ``cards`` to bins at random, or return None at a dead end."""
+def _assign(cards, capacity, voids, suit_of, rng):
+    """Deal ``cards`` to bins at random, or return None at a dead end.
+
+    ``suit_of`` maps a card to its effective suit for this trump.
+    """
     bins = [0] * len(capacity)
     room = capacity[:]
     for card in cards:
-        suit_bit = 1 << SUIT_OF[card]
+        suit_bit = 1 << suit_of[card]
         total = 0
         for i, space in enumerate(room):
             if space and not voids[i] & suit_bit:
@@ -38,7 +42,7 @@ def _assign(cards, capacity, voids, rng):
     return bins
 
 
-def _assign_exactly(cards, capacity, voids, rng):
+def _assign_exactly(cards, capacity, voids, suit_of, rng):
     """Backtracking fallback for the rare deals random dealing can't finish."""
     order = list(range(len(capacity)))
     bins = [0] * len(capacity)
@@ -48,10 +52,10 @@ def _assign_exactly(cards, capacity, voids, rng):
     def place(index):
         if index == len(cards):
             return True
-        key = (SUIT_OF[cards[index]], index, tuple(room))
+        key = (suit_of[cards[index]], index, tuple(room))
         if key in dead:
             return False
-        suit_bit = 1 << SUIT_OF[cards[index]]
+        suit_bit = 1 << suit_of[cards[index]]
         rng.shuffle(order)
         for i in order[:]:
             if room[i] and not voids[i] & suit_bit:
@@ -86,16 +90,17 @@ def sample_world(obs, rng):
     voids.append(0)
 
     # Deal the suits the most players lack first, to avoid dead ends.
+    suit_of = EFFECTIVE_SUIT[obs.trump_suit]
     pressure = [sum(v >> s & 1 for v in voids) for s in range(4)]
     bins = None
     for _ in range(40):
         rng.shuffle(unknown)
-        unknown.sort(key=lambda c: -pressure[SUIT_OF[c]])
-        bins = _assign(unknown, capacity, voids, rng)
+        unknown.sort(key=lambda c: -pressure[suit_of[c]])
+        bins = _assign(unknown, capacity, voids, suit_of, rng)
         if bins is not None:
             break
     if bins is None:
-        bins = _assign_exactly(unknown, capacity, voids, rng)
+        bins = _assign_exactly(unknown, capacity, voids, suit_of, rng)
 
     hands = [0] * obs.n
     hands[obs.seat] = obs.hand
@@ -113,8 +118,11 @@ class Belief:
     so the sample shifts towards whatever the table has actually shown.
     """
 
-    def __init__(self, inference=True, oversample=4, field='mix', react=False):
+    def __init__(self, inference=True, oversample=4, field='mix', react=False, estimate=1,
+                 bid_sigma=None):
         self.react = react
+        self.estimate = estimate  # 1: original rule of thumb, 2 or 3: estimate.py
+        self.bid_sigma = bid_sigma  # overrides every kind's bid_sigma when set
         self.inference = inference
         self.oversample = oversample
         self.weights = FIELDS[field]
@@ -152,9 +160,15 @@ class Belief:
         first = (obs.dealer + 1) % obs.n
         for seat in range(obs.n):
             if seat != obs.seat and obs.bids[seat] != NO_BID:
-                estimate = expected_tricks(
-                    opening[seat], obs.trump_card, obs.n, obs.hand_size, seat == first)
-                sigma = kinds[seat].bid_sigma
+                if self.estimate >= 2:
+                    estimate = estimate_v2.expected_tricks(
+                        opening[seat], obs.trump_card, obs.n, obs.hand_size,
+                        estimate_v2.first_trick_position(seat, obs.dealer, obs.n),
+                        version=self.estimate)
+                else:
+                    estimate = expected_tricks(
+                        opening[seat], obs.trump_card, obs.n, obs.hand_size, seat == first)
+                sigma = self.bid_sigma or kinds[seat].bid_sigma
                 total -= (obs.bids[seat] - estimate) ** 2 / (2.0 * sigma ** 2) + math.log(sigma)
 
         if obs.phase == PLAYING and obs.history:
@@ -172,7 +186,7 @@ class Belief:
         total = 0.0
         for seat, card in obs.history:
             if seat != obs.seat:
-                options = legal_card_mask(replay.hands[seat], replay.lead_suit).bit_count()
+                options = legal_card_mask(replay.hands[seat], replay.lead_suit, replay.trump_suit).bit_count()
                 if options > 1:
                     doubt = kinds[seat].play_doubt
                     chance = doubt / options

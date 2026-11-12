@@ -60,5 +60,5 @@ class PopulationPolicy:
         noise = self.noise[state.to_act]
         if noise and self.rng.random() < noise:
             hand = state.hands[state.to_act]
-            return self.rng.choice(cards_in(legal_card_mask(hand, state.lead_suit)))
+            return self.rng.choice(cards_in(legal_card_mask(hand, state.lead_suit, state.trump_suit)))
         return state_card(state, self.react)

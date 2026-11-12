@@ -1,7 +1,7 @@
 """Playing out a known deal, either by policy or by exact search."""
 
 from .bots.heuristic import state_card
-from .cards import ABOVE, cards_in
+from .cards import EFFECTIVE_SUIT, OUTRANKS, POWER, cards_in
 from .engine import PLAYING, legal_card_mask
 
 
@@ -16,9 +16,15 @@ def distinct_moves(state):
     """Legal cards, skipping those equivalent to a touching card already kept.
 
     Two cards in a suit are interchangeable when no card still in someone's
-    hand or on the table sits between them.
+    hand or on the table sits between them. Cards are walked in order of
+    strength so that the bowers sit next to the Ace of trump.
     """
-    cards = cards_in(legal_card_mask(state.hands[state.to_act], state.lead_suit))
+    trump = state.trump_suit
+    legal = legal_card_mask(state.hands[state.to_act], state.lead_suit, trump)
+    power = POWER[trump]
+    outranks = OUTRANKS[trump]
+    suit_of = EFFECTIVE_SUIT[trump]
+    cards = sorted(cards_in(legal), key=lambda c: (suit_of[c], power[c]))
     if len(cards) < 2:
         return cards
     live = state.table
@@ -26,8 +32,8 @@ def distinct_moves(state):
         live |= hand
     kept = [cards[0]]
     for card in cards[1:]:
-        between = ABOVE[kept[-1]] & ~ABOVE[card] & ~(1 << card)
-        same_suit = (ABOVE[kept[-1]] >> card) & 1
+        between = outranks[kept[-1]] & ~outranks[card] & ~(1 << card)
+        same_suit = (outranks[kept[-1]] >> card) & 1
         if not (same_suit and not between & live):
             kept.append(card)
         else:

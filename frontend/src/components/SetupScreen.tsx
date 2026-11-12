@@ -67,7 +67,8 @@ export function SetupScreen({ onStart }: { onStart: (players: number, handSize: 
       <p className="setup-rules">
         Deal down to one, then a blind round with one hidden card each, then back up to your
         starting hand. Scores carry through all {2 * handSize + 1} rounds.
-        Must follow suit; trumps beat everything else. Make your bid for 10 points per trick
+        Must follow suit; trumps beat everything else. The Jack of trumps is highest, then the
+        other Jack of the same colour, which counts as a trump. Make your bid for 10 points per trick
         (a made zero scores 10). Miss it and lose 10 points for every trick you were off.
       </p>
     </main>

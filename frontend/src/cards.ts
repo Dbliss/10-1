@@ -17,12 +17,14 @@ export const cardName = (card: Card) => `${card.rank} of ${card.suit}`;
 const SUITS: Suit[] = ["Spades", "Hearts", "Clubs", "Diamonds"];
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "Jack", "Queen", "King", "Ace"];
 
-/** Group a hand by suit, trump first, with the highest cards on the left of each suit. */
+/**
+ * Group a hand by the suit each card plays as, trump first, strongest on the
+ * left of each suit. The two bowers therefore lead the trump group.
+ */
 export function sortHand(hand: Card[], trump: Suit | undefined): Card[] {
   const suitOrder = (suit: Suit) => (suit === trump ? -1 : SUITS.indexOf(suit));
   return [...hand].sort(
-    (a, b) =>
-      suitOrder(a.suit) - suitOrder(b.suit) || RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank),
+    (a, b) => suitOrder(a.plays_as) - suitOrder(b.plays_as) || b.power - a.power,
   );
 }
 

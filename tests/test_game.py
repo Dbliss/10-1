@@ -135,3 +135,15 @@ def test_web_routes():
     assert state['phase'] == 'bidding'
     assert client.post('/api/game/bid', json={'bid': ''}).status_code == 400
     assert client.post('/api/game/advance').status_code == 200
+
+
+def test_cards_report_how_they_play_under_bowers():
+    game = Game(4, 5, **FAST)
+    game.start_round()
+    trump = game.state.trump_suit
+    right = game._card_json(9 + 13 * trump)
+    left = game._card_json(9 + 13 * (3 - trump))
+    ace = game._card_json(12 + 13 * trump)
+    assert right['plays_as'] == left['plays_as'] == ace['suit']
+    assert left['suit'] != ace['suit']
+    assert right['power'] > left['power'] > ace['power']

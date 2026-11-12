@@ -29,8 +29,12 @@ def deal_round(rng, n, hand_size):
     return hands, deck[0]
 
 
-def play_game(bots, rules, seed, timed_seat=None):
-    """Play a whole game. Returns (total per seat, seconds, decisions)."""
+def play_game(bots, rules, seed, timed_seat=None, rounds=None):
+    """Play a whole game. Returns (total per seat, seconds, decisions).
+
+    If ``rounds`` is a list, each round's points per seat are appended to it,
+    in the order of ``rules.hand_sizes``.
+    """
     rng = random.Random(seed)  # deals depend only on the seed, never on play
     n = rules.num_players
     dealer = rng.randrange(n)
@@ -51,8 +55,11 @@ def play_game(bots, rules, seed, timed_seat=None):
             else:
                 action = bots[seat].act(obs)
             state.apply(action)
-        for seat, points in enumerate(state.points()):
-            totals[seat] += points
+        points = state.points()
+        for seat in range(n):
+            totals[seat] += points[seat]
+        if rounds is not None:
+            rounds.append(points)
         dealer = (dealer + 1) % n
     return totals, seconds, decisions
 

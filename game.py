@@ -3,7 +3,8 @@ import random
 from ohhell.arena import deal_round
 from ohhell.bots import DEFAULT_SPEC, make_bot
 from ohhell.cards import (
-    RANK_NAMES, RANK_OF, SUIT_NAMES, SUIT_OF, card_from_id, card_id, cards_in,
+    EFFECTIVE_SUIT, POWER, RANK_NAMES, RANK_OF, SUIT_NAMES, SUIT_OF, card_from_id, card_id,
+    cards_in,
 )
 from ohhell.engine import BIDDING, BLIND_CARD, DONE, NO_BID, NO_SUIT, PLAYING, RoundState
 from ohhell.rules import Rules
@@ -256,7 +257,8 @@ class Game:
             'trick': [
                 {'seat': seat, 'card': self._card_json(card)} for seat, card in trick
             ],
-            'lead_suit': SUIT_NAMES[SUIT_OF[trick[0][1]]] if trick else None,
+            'lead_suit': (SUIT_NAMES[EFFECTIVE_SUIT[state.trump_suit][trick[0][1]]]
+                          if trick else None),
             'trick_winner': state.leader if self.phase == 'trick_complete' else None,
             'history': self.history,
         }
@@ -279,10 +281,14 @@ class Game:
             return 'bot'
         return 'user_bid' if self.phase == 'bidding' else 'user_play'
 
-    @staticmethod
-    def _card_json(card):
+    def _card_json(self, card):
+        """Describe a card. ``plays_as`` and ``power`` follow this round's trump,
+        so the left bower plays as a trump and both bowers outrank the Ace."""
+        trump = self.state.trump_suit
         return {
             'id': card_id(card),
             'suit': SUIT_NAMES[SUIT_OF[card]],
             'rank': RANK_NAMES[RANK_OF[card]],
+            'plays_as': SUIT_NAMES[EFFECTIVE_SUIT[trump][card]],
+            'power': POWER[trump][card],
         }

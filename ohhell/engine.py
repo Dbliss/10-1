@@ -8,7 +8,7 @@ a ``RoundState`` with ``Observation.determinize``.
 
 from dataclasses import dataclass
 
-from .cards import SUIT_MASK, SUIT_OF, cards_in
+from .cards import EFFECTIVE_SUIT, POWER, SUIT_CARDS, SUIT_OF, cards_in
 from .rules import Rules
 
 BIDDING, PLAYING, DONE = 0, 1, 2
@@ -29,10 +29,11 @@ def legal_bids(rules, hand_size, bids):
     return options
 
 
-def legal_card_mask(hand, lead_suit):
+def legal_card_mask(hand, lead_suit, trump):
+    """Cards a hand may play; the left bower follows trump, not its own suit."""
     if lead_suit == NO_SUIT:
         return hand
-    return (hand & SUIT_MASK[lead_suit]) or hand
+    return (hand & SUIT_CARDS[trump][lead_suit]) or hand
 
 
 class RoundState:
@@ -102,7 +103,7 @@ class RoundState:
         if self.phase == PLAYING:
             if self.blind:
                 return [BLIND_CARD]
-            return cards_in(legal_card_mask(self.hands[self.to_act], self.lead_suit))
+            return cards_in(legal_card_mask(self.hands[self.to_act], self.lead_suit, self.trump_suit))
         return []
 
     def apply(self, action):
@@ -129,7 +130,7 @@ class RoundState:
         """Play a card known to be legal. This is the hot path for search."""
         seat = self.to_act
         bit = 1 << card
-        suit = SUIT_OF[card]
+        suit = EFFECTIVE_SUIT[self.trump_suit][card]
         self.hands[seat] ^= bit
         self.played |= bit
         self.table |= bit
@@ -141,9 +142,11 @@ class RoundState:
         else:
             if suit != self.lead_suit:
                 self.voids[seat] |= 1 << self.lead_suit
+            trump = self.trump_suit
             best = self.best_card
-            best_suit = SUIT_OF[best]
-            if (card > best) if suit == best_suit else (suit == self.trump_suit):
+            best_suit = EFFECTIVE_SUIT[trump][best]
+            if ((POWER[trump][card] > POWER[trump][best]) if suit == best_suit
+                    else (suit == trump)):
                 self.best_card = card
                 self.best_seat = seat
 
@@ -218,7 +221,7 @@ class Observation:
         if self.phase == PLAYING:
             if self.blind:
                 return [BLIND_CARD]
-            return cards_in(legal_card_mask(self.hand, self.lead_suit))
+            return cards_in(legal_card_mask(self.hand, self.lead_suit, self.trump_suit))
         return []
 
     def cards_held(self, seat):
