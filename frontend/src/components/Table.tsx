@@ -29,8 +29,10 @@ function SeatPlate({ player, seat, game }: { player: Player; seat: number; game:
   const isWinner = game.trick_winner === seat;
 
   let bidTone = "";
-  if (player.bid !== null && player.tricks_won > player.bid) bidTone = "bid-over";
-  else if (player.bid !== null && player.tricks_won === player.bid) bidTone = "bid-met";
+  if (game.phase !== "bidding" && player.bid !== null) {
+    if (player.tricks_won > player.bid) bidTone = "bid-over";
+    else if (player.tricks_won === player.bid) bidTone = "bid-met";
+  }
 
   return (
     <div
@@ -66,7 +68,9 @@ function SeatPlate({ player, seat, game }: { player: Player; seat: number; game:
               initial={{ scale: 1.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
             >
-              Won {player.tricks_won} of {player.bid}
+              {game.phase === "bidding"
+                ? `Bid ${player.bid}`
+                : `Won ${player.tricks_won} of ${player.bid}`}
             </motion.span>
           )}
         </div>
