@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { isRed, SUIT_GLYPH } from "../cards";
 import type { GameState, RoundResult } from "../types";
 
@@ -16,11 +17,24 @@ function ResultCell({ result }: { result: RoundResult }) {
 
 export function Scoreboard({ game }: { game: GameState }) {
   const rounds = Array.from({ length: game.total_rounds }, (_, i) => i + 1);
+  const scroller = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const box = scroller.current;
+    const row = box?.querySelector<HTMLElement>(".row-now");
+    if (!box || !row) return;
+    const head = box.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+    const foot = box.querySelector("tfoot")?.getBoundingClientRect().height ?? 0;
+    const top = row.offsetTop - head;
+    const bottom = row.offsetTop + row.offsetHeight + foot - box.clientHeight;
+    if (box.scrollTop > top) box.scrollTop = top;
+    else if (box.scrollTop < bottom) box.scrollTop = bottom;
+  }, [game.round]);
 
   return (
     <section className="scoreboard" aria-label="Scoreboard">
       <h2>Scores</h2>
-      <div className="scoreboard-scroll">
+      <div className="scoreboard-scroll" ref={scroller}>
         <table>
           <thead>
             <tr>

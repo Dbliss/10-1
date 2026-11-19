@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { GameState } from "../types";
 import { AdvicePanel } from "./AdvicePanel";
 import { GameOverDialog, RoundSummaryDialog } from "./Dialogs";
+import { GameReviewScreen, useReview } from "./GameReview";
 import { Hand } from "./Hand";
 import { Scoreboard } from "./Scoreboard";
 import { StatusBar } from "./StatusBar";
@@ -61,6 +62,13 @@ export function GameScreen({
   onPlayAgain,
   onQuit,
 }: GameScreenProps) {
+  const over = game.phase === "game_over";
+  const { review, error: reviewError } = useReview(over);
+  const [reviewing, setReviewing] = useState(false);
+  useEffect(() => {
+    if (!over) setReviewing(false);
+  }, [over]);
+
   return (
     <div className="game">
       <header className="topbar">
@@ -79,13 +87,22 @@ export function GameScreen({
       </main>
 
       <aside className="sidebar">
-        <Scoreboard game={game} />
         <AdvicePanel game={game} />
+        <Scoreboard game={game} />
       </aside>
 
       {game.phase === "round_over" && <RoundSummaryDialog game={game} onNext={onNextRound} />}
-      {game.phase === "game_over" && (
-        <GameOverDialog game={game} onPlayAgain={onPlayAgain} onChangeSettings={onQuit} />
+      {over && !reviewing && (
+        <GameOverDialog
+          game={game}
+          review={review}
+          onReview={() => setReviewing(true)}
+          onPlayAgain={onPlayAgain}
+          onChangeSettings={onQuit}
+        />
+      )}
+      {over && reviewing && (
+        <GameReviewScreen review={review} error={reviewError} onClose={() => setReviewing(false)} />
       )}
     </div>
   );

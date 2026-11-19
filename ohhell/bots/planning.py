@@ -135,7 +135,7 @@ class PlanningBot(HybridBot):
         if len(cards) == 1:
             return cards[0]
         remaining = obs.hand.bit_count() * obs.n - obs.trick_size
-        if remaining <= self.endgame_cards:
+        if remaining <= self.endgame_limit(obs.n):
             return super().play(obs)
         predicted = dict(zip(cards, self.models.card_values(obs, obs.seat, obs.hand, cards)))
         cards.sort(key=predicted.get, reverse=True)

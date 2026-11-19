@@ -51,14 +51,16 @@ def noisy_bid(bid, kind, rng, options):
 class PopulationPolicy:
     """Finishes a deal with each seat playing according to its kind."""
 
-    def __init__(self, kinds, rng, react=False):
+    def __init__(self, kinds, rng, react=False, style=0, hero=-1):
         self.noise = [kind.card_noise for kind in kinds]
         self.rng = rng
         self.react = react
+        self.style = style  # heuristic.py style bits, for ``hero`` (or EVERY_SEAT)
+        self.hero = hero
 
     def __call__(self, state):
         noise = self.noise[state.to_act]
         if noise and self.rng.random() < noise:
             hand = state.hands[state.to_act]
             return self.rng.choice(cards_in(legal_card_mask(hand, state.lead_suit, state.trump_suit)))
-        return state_card(state, self.react)
+        return state_card(state, self.react, self.style, self.hero)

@@ -1,122 +1,56 @@
-"""JSON API for the Oh Hell game, and host for the built React frontend."""
+"""Local web server for the Oh Hell game: the JSON API (app_api.py) over HTTP,
+and host for the built React frontend. The GitHub Pages build runs the same
+API in the browser instead (frontend/src/worker)."""
 
+import threading
+import time
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 
-from bid_helper import recommend
-from game import Game
+from app_api import AppApi
 
 FRONTEND_DIST = Path(__file__).parent / 'frontend' / 'dist'
 BID_HELPER_PAGE = Path(__file__).parent / 'bid_helper.html'
 
 app = Flask(__name__, static_folder=None)
-
-game = None  # The server hosts a single game at a time.
-
-
-def respond(error=None):
-    """Return the current game state, or a 400 when an action was rejected."""
-    if error:
-        return jsonify({'error': error}), 400
-    return jsonify(game.get_state() if game else None)
+api = AppApi()  # The server hosts a single game at a time.
+reviewer = None  # the thread that analyses the user's decisions for the review
 
 
-def require_game():
-    if game is None:
-        abort(404, description='No game in progress.')
+def review_in_background():
+    """Analyse the user's decisions one at a time, between the bots' turns."""
+    while True:
+        if not api.review_step():
+            time.sleep(0.25)
+            continue
+        time.sleep(0)  # let a waiting request take the lock first
 
 
-@app.errorhandler(404)
-def not_found(err):
-    if request.path.startswith('/api/'):
-        return jsonify({'error': err.description}), 404
-    return err
+def start_reviewer():
+    global reviewer
+    if reviewer is None:
+        reviewer = threading.Thread(target=review_in_background, daemon=True)
+        reviewer.start()
 
 
-@app.get('/api/game')
-def get_game():
-    return respond()
-
-
-@app.post('/api/game')
-def new_game():
-    global game
-    data = request.get_json(silent=True) or {}
-    try:
-        players = int(data.get('players', 4))
-        hand_size = int(data.get('hand_size', 10))
-    except (TypeError, ValueError):
-        return respond('Players and hand size must be numbers.')
-
-    if not Game.MIN_PLAYERS <= players <= Game.MAX_PLAYERS:
-        return respond(f'Players must be between {Game.MIN_PLAYERS} and {Game.MAX_PLAYERS}.')
-    max_hand = Game.max_hand_size(players)
-    if not 1 <= hand_size <= max_hand:
-        return respond(f'Hand size must be between 1 and {max_hand} for {players} players.')
-
-    game = Game(num_players=players, num_rounds=hand_size)
-    game.start_round()
-    return respond()
-
-
-@app.delete('/api/game')
-def end_game():
-    global game
-    game = None
-    return respond()
-
-
-@app.post('/api/game/bid')
-def bid():
-    require_game()
-    data = request.get_json(silent=True) or {}
-    try:
-        value = int(data.get('bid'))
-    except (TypeError, ValueError):
-        return respond('Bid must be a number.')
-    return respond(game.receive_bid(Game.HUMAN_NAME, value))
-
-
-@app.post('/api/game/play')
-def play():
-    require_game()
-    data = request.get_json(silent=True) or {}
-    return respond(game.play_card(Game.HUMAN_NAME, data.get('card')))
-
-
-@app.post('/api/game/advance')
-def advance():
-    require_game()
-    game.advance()
-    return respond()
-
-
-@app.get('/api/game/advice')
-def advice():
-    require_game()
-    result = game.advice()
-    if result is None:
-        return respond('It is not your turn.')
-    return jsonify(result)
-
-
-@app.post('/api/bid-helper')
-def bid_helper():
-    """Recommend a bid for a hand entered by hand, outside any game."""
-    data = request.get_json(silent=True) or {}
-    try:
-        result = recommend(
-            data.get('players', 4), data.get('hand', []), data.get('trump', ''),
-            data.get('bids', []), blind=bool(data.get('blind')))
-    except (TypeError, ValueError) as err:
-        return respond(str(err))
-    return jsonify(result)
+@app.route('/api/<path:path>', methods=['GET', 'POST', 'DELETE'])
+def api_request(path):
+    status, data = api.handle(request.method, f'/api/{path}', request.get_json(silent=True))
+    if request.method == 'POST' and path == 'game' and status == 200:
+        start_reviewer()
+    return jsonify(data), status
 
 
 @app.get('/bid')
 def bid_helper_page():
     return send_from_directory(BID_HELPER_PAGE.parent, BID_HELPER_PAGE.name)
+
+
+@app.get('/bid-game')
+def bid_game_page():
+    """The bid game is part of the React frontend, which reads the path."""
+    return frontend('index.html')
 
 
 @app.get('/', defaults={'path': 'index.html'})

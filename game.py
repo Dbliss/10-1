@@ -8,6 +8,7 @@ from ohhell.cards import (
 )
 from ohhell.engine import BIDDING, BLIND_CARD, DONE, NO_BID, NO_SUIT, PLAYING, RoundState
 from ohhell.rules import Rules
+from review import GameReview
 
 
 class Game:
@@ -28,15 +29,43 @@ class Game:
     MIN_PLAYERS = 2
     MAX_PLAYERS = 8
     MAX_HAND_SIZE = 10
-    BOT_SPEC = DEFAULT_SPEC
-    ADVISOR_SPEC = f'{DEFAULT_SPEC},worlds=64,bid_worlds=128'
+    # Tournaments give every bot 2 ms a turn so runs finish. Against a person
+    # there is no such hurry: the opponents think for BOT_TIME_MS a turn and
+    # the advisor (in-game advice and the /bid helper) for ADVISOR_TIME_MS.
+    # A later setting in a spec replaces the earlier one. v3 stops reading
+    # opponents (inference=0) because at 2 ms the reading cost more deals than
+    # it was worth; at 10 ms reading was ahead again (BOT_EXPERIMENTS.md, 16
+    # November 2026), so these longer-thinking bots read (LONG_THINK). They
+    # also search every legal card (shortlist=13): +0.69 +/- 1.14 points a game
+    # at 250 ms, short of the gate's bar, adopted by the user on 17 November;
+    # and treat equal cards as one (touching=1): +0.37 +/- 2.96 after 21,000
+    # duel rounds, adopted by the user the same day. bid_sigma=0.76 reads bids
+    # with the spread actually measured between bids and the trick estimate
+    # (v2's 1.4 was twice too loose): passed the 250 ms duel gate (+2.76 +/-
+    # 2.62) and confirmation on unseen deals (+2.18, one-sided margin 1.55).
+    # bid_blend=0.25: the bid network's share of the trick odds, down from 0.5
+    # (simulation 75%): positive throughout its 250 ms duel, adopted by the
+    # user on 18 November before a verdict. field=mix: plan for a blend of
+    # opponent kinds instead of the previous bot only: passed the 250 ms main
+    # gate (+2.99 +/- 2.97 after 36,000 rounds), adopted by the user on 18
+    # November while confirmation on unseen deals was still running (+1.13
+    # +/- 6.17 at 18,000 of 36,000). Overrides DEFAULT_SPEC's field=previous.
+    LONG_THINK = 'field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25'
+    BOT_TIME_MS = 750
+    ADVISOR_TIME_MS = 1000
+    BOT_SPEC = f'{DEFAULT_SPEC},{LONG_THINK},time_ms={BOT_TIME_MS}'
+    ADVISOR_SPEC = f'{DEFAULT_SPEC},{LONG_THINK},worlds=64,bid_worlds=128,time_ms={ADVISOR_TIME_MS}'
+    # The end-of-game review analyses every choice the user made, in the
+    # background while the game goes on, so it thinks for less time each.
+    REVIEW_TIME_MS = 400
 
     @classmethod
     def max_hand_size(cls, num_players):
         """Largest opening hand that leaves a card to turn up as trump."""
         return min(cls.MAX_HAND_SIZE, 51 // num_players)
 
-    def __init__(self, num_players=4, num_rounds=10, bot_spec=None, advisor_spec=None):
+    def __init__(self, num_players=4, num_rounds=10, bot_spec=None, advisor_spec=None,
+                 review_spec=None):
         """Deal ``num_rounds`` cards first, descend through blind, then ascend."""
         self.rules = Rules(num_players, num_rounds)
         self.num_players = num_players
@@ -48,6 +77,8 @@ class Game:
         self.bots = [None] + [
             make_bot(spec, random.getrandbits(32)) for _ in range(1, num_players)]
         self.advisor_spec = advisor_spec or self.ADVISOR_SPEC
+        self.review = GameReview(
+            review_spec or f'{self.advisor_spec},time_ms={self.REVIEW_TIME_MS}')
         self.dealer_index = random.randrange(num_players)
         self.round_number = 0
         self.state = None
@@ -97,8 +128,35 @@ class Game:
             return f"Bid must be between 0 and {self.state.hand_size}."
         if bid not in self.state.legal_actions():
             return f"The dealer can't bid {bid}: the bids can't add up to the hand size."
+        self._record_decision(bid)
         self._place_bid(bid)
         return None
+
+    def _record_decision(self, choice):
+        """Keep the user's view of a decision for the end-of-game review."""
+        state = self.state
+        trump = state.trump_suit
+        describe = lambda card: self._card_json(card, trump)
+        self.review.record(state.observation(0), choice, describe, {
+            'round': self.round_number,
+            'hand_size': state.hand_size,
+            'blind': state.blind,
+            'trump': self._card_json(state.trump_card),
+            'dealer': self.dealer_index,
+            'hand': [] if state.blind else [self._card_json(c) for c in cards_in(state.hands[0])],
+            'bids': [None if b == NO_BID else b for b in state.bids],
+            'tricks_won': list(state.tricks_won),
+            'trick': [{'seat': seat, 'card': self._card_json(card)}
+                      for seat, card in self._trick_on_table()],
+            'trick_number': state.hand_size - state.hands[0].bit_count() + 1,
+        })
+
+    def review_report(self):
+        """The review of the user's decisions so far; see ``review.GameReview``."""
+        report = self.review.report(self.scores[0])
+        report['players'] = list(self.names)
+        report['finished'] = self.phase == 'game_over'
+        return report
 
     def _place_bid(self, bid):
         self.state.apply(bid)
@@ -130,6 +188,7 @@ class Game:
         if number not in self.state.legal_actions():
             return "You must follow suit if possible."
 
+        self._record_decision(number)
         self._play(number)
         return None
 
@@ -149,6 +208,10 @@ class Game:
 
     def calculate_scores(self):
         """Add this round's points and record the round for the scoreboard."""
+        for seat, bot in enumerate(self.bots):
+            observer = getattr(bot, 'observe_round', None)
+            if observer is not None:
+                observer(self.state.observation(seat))
         results = []
         for seat, points in enumerate(self.state.points()):
             self.scores[seat] += points
@@ -190,6 +253,8 @@ class Game:
                     ],
                 }
             return {'kind': 'blind', 'recommended': 'blind'}
+        if hasattr(advisor, 'start_clock'):
+            advisor.start_clock()  # the analyses below are not timed otherwise
         if obs.phase == BIDDING:
             analysis = advisor.analyse_bids(obs)
             best = max(analysis.values, key=analysis.values.get)
@@ -281,10 +346,12 @@ class Game:
             return 'bot'
         return 'user_bid' if self.phase == 'bidding' else 'user_play'
 
-    def _card_json(self, card):
-        """Describe a card. ``plays_as`` and ``power`` follow this round's trump,
-        so the left bower plays as a trump and both bowers outrank the Ace."""
-        trump = self.state.trump_suit
+    def _card_json(self, card, trump=None):
+        """Describe a card. ``plays_as`` and ``power`` follow this round's trump
+        (or ``trump``), so the left bower plays as a trump and both bowers
+        outrank the Ace."""
+        if trump is None:
+            trump = self.state.trump_suit
         return {
             'id': card_id(card),
             'suit': SUIT_NAMES[SUIT_OF[card]],

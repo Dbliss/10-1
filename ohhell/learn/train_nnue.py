@@ -20,7 +20,7 @@ from .nn import MLP, huber_loss
 from .nnue import INPUTS, MODEL_DIR, feature_matrix, save_network
 
 
-def dataset(rows, teacher=None, labeled=False):
+def dataset(rows, teacher=None, labeled=False, feature_builder=feature_matrix):
     groups = {split: {'x': [], 'y': [], 'cases': [], 'deals': set()}
               for split in ('train', 'validation', 'test')}
     for row in rows:
@@ -32,7 +32,7 @@ def dataset(rows, teacher=None, labeled=False):
         cards = obs.legal_actions()
         if len(cards) < 2:
             continue
-        features = feature_matrix(obs, obs.seat, obs.hand, cards)
+        features = feature_builder(obs, obs.seat, obs.hand, cards)
         if labeled:
             values = {o['action']: o['score'] for o in row['outcomes']}
             if set(values) != set(cards):

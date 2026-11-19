@@ -56,6 +56,13 @@ def play_game(bots, rules, seed, timed_seat=None, rounds=None):
                 action = bots[seat].act(obs)
             state.apply(action)
         points = state.points()
+        for seat, bot in enumerate(bots):
+            observer = getattr(bot, 'observe_round', None)
+            if observer is not None:
+                started = time.perf_counter()
+                observer(state.observation(seat))
+                if seat == timed_seat:
+                    seconds += time.perf_counter() - started
         for seat in range(n):
             totals[seat] += points[seat]
         if rounds is not None:

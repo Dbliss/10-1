@@ -301,10 +301,10 @@
     $("elapsed").textContent = duration(s.elapsed);
     $("rate").textContent = s.rate ? `${(s.rate * 60).toFixed(0)}/min` : "…";
     $("bar").style.width = `${s.games / s.total * 100}%`;
-    const word = { better: "Better", worse: "Worse", "no gain": "No real gain", inconclusive: "Inconclusive", unconfirmed: "Didn't repeat", reference: "Reference only" };
+    const word = { better: "Better", worse: "Worse", "no gain": "No real gain", inconclusive: "Inconclusive", unconfirmed: "Didn't repeat", reference: "Reference only", "over time": "Over mean time limit" };
     const candidate = s.players[0].name, current = s.players[s.baseline].name;
     const candidateTag = candidate.split(" ")[0], currentTag = current.split(" ")[0];
-    $("verdict").textContent = s.verdict ? word[s.verdict] : s.reference ? "Reference, no verdict" : s.stage === "repeat" ? "Repeating" : "Still testing";
+    $("verdict").textContent = s.verdict ? (word[s.verdict] ?? s.verdict) : s.reference ? "Reference, no verdict" : s.stage === "repeat" ? "Repeating" : "Still testing";
     $("verdict").className = "value small " + (s.verdict === "better" ? "gain" : s.verdict && s.verdict !== "reference" ? "loss" : "");
     $("verdictLabel").textContent = `Verdict on ${candidate}`;
     $("turnLabel").textContent = `Time per turn, ${candidateTag} / ${currentTag}`;
@@ -405,9 +405,12 @@
       $("sub").classList.remove("warn");
       const timing = stats.reference
         ? `${stats.players[0].name} has no time limit; every other simulating bot gets ${stats.time_ms} ms per turn. Reference comparison only: no checks, no verdict, no promotion.`
-        : `${stats.time_ms} ms per turn for every simulating bot.`;
+        : stats.candidate_time_ms != null && stats.candidate_time_ms !== stats.time_ms
+          ? `${stats.candidate_time_ms} ms per candidate turn; ${stats.time_ms} ms for every other simulating bot.`
+          : `${stats.time_ms} ms per turn for every simulating bot.`;
+      const meanLimit = stats.mean_time_ratio == null ? "" : ` A better verdict also requires candidate mean time at most ${(stats.mean_time_ratio * 100).toFixed(0)}% of baseline mean time.`;
       const checks = stats.reference ? "" : ` Checks every ${Math.floor(stats.max_sets / 10).toLocaleString()} sets.`;
-      $("sub").textContent = `${stats.players[0].name} against ${stats.players[stats.baseline].name} at tables of 3 to 8 players, ${timing} ${stats.round_format === "down-blind-up" ? "Hands go down to 1, blind 0, then back to the starting size. " : ""}Every set is one preset game played from every seat.${checks}`;
+      $("sub").textContent = `${stats.players[0].name} against ${stats.players[stats.baseline].name} at tables of 3 to 8 players, ${timing} ${stats.round_format === "down-blind-up" ? "Hands go down to 1, blind 0, then back to the starting size. " : ""}Every set is one preset game played from every seat.${checks}${meanLimit}`;
     } catch {
       $("sub").classList.add("warn");
       $("sub").textContent = "Lost contact with the tournament script. Showing the last results received.";

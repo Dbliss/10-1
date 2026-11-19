@@ -4,7 +4,7 @@ import type { Awaiting, GameState } from "./types";
 
 /** How long to show each automatic step before moving on, in milliseconds. */
 const AUTO_ADVANCE_DELAY: Partial<Record<Awaiting, number>> = {
-  bot: 750,
+  bot: 0,
   collect_trick: 1600,
 };
 

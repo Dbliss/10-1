@@ -129,7 +129,7 @@ def test_web_routes():
     client = website.app.test_client()
     assert client.post('/api/game', json={'players': 9}).status_code == 400
     assert client.post('/api/game', json={'players': 8, 'hand_size': 10}).status_code == 400
-    website.game = None
+    website.api.game = None
     assert client.get('/api/game/advice').status_code == 404
     state = client.post('/api/game', json={'players': 4, 'hand_size': 2}).get_json()
     assert state['phase'] == 'bidding'
@@ -147,3 +147,31 @@ def test_cards_report_how_they_play_under_bowers():
     assert right['plays_as'] == left['plays_as'] == ace['suit']
     assert left['suit'] != ace['suit']
     assert right['power'] > left['power'] > ace['power']
+
+
+def test_review_grades_every_real_choice_the_user_made():
+    game = Game(4, 3, review_spec=FAST['advisor_spec'], **FAST)
+    play_to_the_end(game, random.Random(3))
+    assert game.review.pending() > 0
+    while game.review.analyse_next():
+        pass
+    report = game.review_report()
+    assert report['complete'] and report['finished']
+    assert report['reviewed'] == report['total'] == len(report['moves'])
+    assert {m['kind'] for m in report['moves']} == {'bid', 'card'}
+    for move in report['moves']:
+        assert len(move['options']) >= 2
+        assert move['loss'] >= 0
+        values = [o['expected_points'] for o in move['options']]
+        assert values == sorted(values, reverse=True)
+        key = 'bid' if move['kind'] == 'bid' else 'card'
+        chosen = [o for o in move['options']
+                  if (o[key] if key == 'bid' else o[key]['id']) == move['choice']]
+        assert len(chosen) == 1
+        if move['kind'] == 'card':
+            assert move['choice'] in [c['id'] for c in move['hand']]
+    overall = report['overall']
+    assert overall['decisions'] == report['total']
+    assert sum(overall['grades'].values()) == report['total']
+    assert 0 <= overall['accuracy'] <= 100
+    assert report['expected_best_score'] >= report['score']

@@ -51,6 +51,10 @@ def provenance(spec):
         from .nnue import MODEL_DIR as NNUE_DIR
         opts.setdefault('play_models', opts.get('models', str(NNUE_DIR)))
     paths = model_paths(opts.get('models'), opts.get('bid_models'), opts.get('play_models'))
+    if (opts.get('policy', 'heuristic') != 'heuristic'
+            or opts.get('policy_inference', '0') != '0' or opts.get('evaluator') == 'compact'):
+        from .rollout import MODEL_DIR as ROLLOUT_DIR
+        paths = (*paths, Path(opts.get('rollout_models', str(ROLLOUT_DIR))) / 'play.npz')
     sources = sorted(Path(__file__).parents[1].rglob('*.py'))
     sources += sorted((Path(__file__).parents[1] / 'native').glob('*.c'))
     return {'spec': spec, 'models': {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -282,7 +286,7 @@ def main():
                 parser.error('repeats must be positive; max-hand must be 1..10')
             rows = build_bank(args.seed, args.repeats, args.max_hand)
             metadata = {'version': VERSION, 'settings': vars(args),
-                        'rules': asdict(Rules()), 'sequence': 'down/blind/up',
+                        'rules': asdict(Rules()), 'trump_ranking': 'bowers', 'sequence': 'down/blind/up',
                         'scope': 'Independent round decisions, not cumulative game evaluation'}
         else:
             if args.samples < 1:

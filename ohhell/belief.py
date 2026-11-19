@@ -10,7 +10,7 @@ evidence by importance resampling.
 import math
 
 from . import estimate as estimate_v2
-from .bots.heuristic import expected_tricks, state_card
+from .bots.heuristic import EVERY_SEAT, expected_tricks, state_card
 from .cards import EFFECTIVE_SUIT, FULL_DECK, cards_in
 from .engine import NO_BID, PLAYING, RoundState, legal_card_mask
 from .opponents import FIELDS, KINDS, SKILLED
@@ -119,16 +119,22 @@ class Belief:
     """
 
     def __init__(self, inference=True, oversample=4, field='mix', react=False, estimate=1,
-                 bid_sigma=None):
+                 bid_sigma=None, style=0):
         self.react = react
+        self.style = style  # heuristic.py style bits the opponents are assumed to play
         self.estimate = estimate  # 1: original rule of thumb, 2 or 3: estimate.py
         self.bid_sigma = bid_sigma  # overrides every kind's bid_sigma when set
         self.inference = inference
         self.oversample = oversample
         self.weights = FIELDS[field]
+        self.seat_weights = None
+        self.card_policy = None
+        self.policy_temperature = 10
+        self.play_reading = True  # False: weigh deals by the bids alone
 
     def _kinds(self, obs, rng):
-        kinds = rng.choices(KINDS, self.weights, k=obs.n)
+        kinds = ([rng.choices(KINDS, row, k=1)[0] for row in self.seat_weights]
+                 if self.seat_weights is not None else rng.choices(KINDS, self.weights, k=obs.n))
         kinds[obs.seat] = SKILLED
         return kinds
 
@@ -171,7 +177,7 @@ class Belief:
                 sigma = self.bid_sigma or kinds[seat].bid_sigma
                 total -= (obs.bids[seat] - estimate) ** 2 / (2.0 * sigma ** 2) + math.log(sigma)
 
-        if obs.phase == PLAYING and obs.history:
+        if obs.phase == PLAYING and obs.history and self.play_reading:
             total += self._play_log_weight(obs, opening, kinds)
         return total
 
@@ -190,7 +196,15 @@ class Belief:
                 if options > 1:
                     doubt = kinds[seat].play_doubt
                     chance = doubt / options
-                    if state_card(replay, self.react) == card:
+                    if self.card_policy is not None:
+                        from .cards import cards_in
+                        cards = cards_in(legal_card_mask(replay.hands[seat], replay.lead_suit,
+                                                         replay.trump_suit))
+                        values = self.card_policy.card_values(replay, seat, replay.hands[seat], cards)
+                        top = max(values)
+                        weights = [math.exp((v - top) / self.policy_temperature) for v in values]
+                        chance += (1 - doubt) * weights[cards.index(card)] / sum(weights)
+                    elif state_card(replay, self.react, self.style, EVERY_SEAT) == card:
                         chance += 1.0 - doubt
                     total += math.log(chance)
             replay.play_unchecked(card)

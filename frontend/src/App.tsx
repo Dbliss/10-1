@@ -18,7 +18,7 @@ export default function App() {
             onBid={bid}
             onPlay={play}
             onNextRound={nextRound}
-            onPlayAgain={() => newGame(game.players.length, game.total_rounds)}
+            onPlayAgain={() => newGame(game.players.length, game.round_sizes[0])}
             onQuit={endGame}
           />
         ) : (

@@ -78,3 +78,58 @@ export interface GameState {
   trick_winner: number | null;
   history: RoundHistory[];
 }
+
+export type Grade = "best" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
+
+interface ReviewMoveBase {
+  index: number;
+  round: number;
+  hand_size: number;
+  blind: boolean;
+  trump: Card;
+  dealer: number;
+  /** The user's hand before the decision; empty in the blind round. */
+  hand: Card[];
+  bids: (number | null)[];
+  tricks_won: number[];
+  trick: { seat: number; card: Card }[];
+  trick_number: number;
+  /** Expected points the choice gave up against the best option. */
+  loss: number;
+  grade: Grade;
+}
+
+export type ReviewMove =
+  | (ReviewMoveBase & {
+      kind: "bid";
+      choice: number;
+      best: number;
+      options: { bid: number; expected_points: number; make_chance: number }[];
+    })
+  | (ReviewMoveBase & {
+      kind: "card";
+      choice: string;
+      best: string;
+      options: { card: Card; expected_points: number }[];
+    });
+
+export interface ReviewSummary {
+  accuracy: number | null;
+  decisions: number;
+  points_lost: number;
+  grades: Record<Grade, number>;
+}
+
+export interface GameReview {
+  complete: boolean;
+  finished: boolean;
+  reviewed: number;
+  total: number;
+  overall: ReviewSummary;
+  bidding: ReviewSummary;
+  playing: ReviewSummary;
+  score: number;
+  expected_best_score: number;
+  players: string[];
+  moves: ReviewMove[];
+}

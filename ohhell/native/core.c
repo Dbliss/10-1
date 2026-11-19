@@ -59,6 +59,11 @@ typedef struct {
 } Kind;
 
 typedef struct {
+    float w0[32 * 32], w1[32 * 16], w2[16];
+    float b0[32], b1[16], b2[1];
+} RolloutNet;
+
+typedef struct {
     int worlds, endgame_cards, inference, oversample;
     int points_per_trick, made_zero, penalty_per_trick;
     double weights[MAX_KINDS];
@@ -74,11 +79,31 @@ typedef struct {
     double est_side[EST_SIDE];
     double est_trump[EST_TRUMP];
     double est_spread[3];
+    int style;     /* heuristic.py style bits for the observing seat's own play-outs */
+    int style_all; /* apply them to every simulated seat, and to judging past plays */
+    /* Card evaluation plays each distinct resampled deal once and counts it
+     * as many times as it was drawn. The estimate is unchanged; only the
+     * repeated work goes, so a timed turn gets through more deals. */
+    int dedupe;
+    const RolloutNet *rollout;
+    int rollout_seats, policy_inference;
+    double policy_temperature, stop_z;
+    int stop_min, seat_priors;
+    double seat_weights[MAX_SEATS][MAX_KINDS];
+    int bid_only; /* weigh sampled deals by the bids alone, not by past plays */
+    /* With no time limit, keep drawing blocks of worlds until this many deals
+     * are done (0: one block). Fixed budgets repeat exactly for a given seed. */
+    int budget;
+    /* Exact endgames also cover deals with noisy opponents: a seat with
+     * card_noise e plays its best card with probability 1 - e and a uniformly
+     * random legal card with probability e (solve_noisy). 0: such deals are
+     * played out instead, as before. */
+    int endgame_noise;
 } Params;
 
 typedef struct {
     u64 hands[MAX_SEATS], played, table;
-    int bids[MAX_SEATS], won[MAX_SEATS];
+    int bids[MAX_SEATS], won[MAX_SEATS], voids[MAX_SEATS];
     int to_act, lead_suit, best_card, best_seat, trick_size, leader, done;
 } State;
 
@@ -86,6 +111,9 @@ typedef struct {
     int n, trump_suit;
     u64 trump_bit;
     int react;
+    int style, hero; /* style bits, and the seat they apply to (EVERY_SEAT: all) */
+    const Params *params;
+    int hand_size, dealer, root;
 } Table;
 
 typedef struct {
@@ -182,7 +210,29 @@ static inline int is_boss(int card, u64 seen, int trump) {
     return !(T_OUT[trump][card] & ~seen);
 }
 
-static int choose_lead(u64 hand, int trump, u64 seen, int want) {
+#define EVERY_SEAT (-2)
+#define SCRAMBLE_FOLLOW 1
+#define SCRAMBLE_RUFF 2
+#define SCRAMBLE_LEAD 4
+
+/* heuristic._holding_ruff */
+static int holding_ruff(u64 trumps, int trump, u64 seen, int call) {
+    u64 spare = 0;
+    for (u64 rest = trumps; rest; rest &= rest - 1) {
+        int card = LOWEST(rest);
+        if (!is_boss(card, seen, trump)) spare |= UINT64_C(1) << card;
+    }
+    if (!spare) return bottom_of(trumps, trump);
+    int limit = call == 1 ? 2 : 0;
+    for (u64 rest = spare; rest;) {
+        int card = bottom_of(rest, trump);
+        if (POP(T_OUT[trump][card] & ~seen) <= limit) return card;
+        rest &= ~(UINT64_C(1) << card);
+    }
+    return top_of(spare, trump);
+}
+
+static int choose_lead(u64 hand, int trump, u64 seen, int want, int near) {
     u64 trumps = hand & T_SUIT[trump][trump];
     if (want) {
         if (trumps) {
@@ -200,6 +250,18 @@ static int choose_lead(u64 hand, int trump, u64 seen, int want) {
         }
         if (best != NO_CARD) return best;
         if (trumps && is_boss(top_of(trumps, trump), seen, trump)) return top_of(trumps, trump);
+        if (near) {
+            for (int s = 0; s < 4; s++) {
+                u64 cards = hand & T_SUIT[trump][s];
+                if (cards && s != trump) {
+                    int top = top_of(cards, trump);
+                    if (POP(T_OUT[trump][top] & ~seen) == 1
+                            && (best == NO_CARD || RANK_OF(top) > RANK_OF(best)))
+                        best = top;
+                }
+            }
+            if (best != NO_CARD) return best;
+        }
         u64 shortest = 0;
         for (int s = 0; s < 4; s++) {
             u64 cards = hand & T_SUIT[trump][s];
@@ -253,9 +315,12 @@ static int lowest_rank(u64 mask, int trump) {
 }
 
 static int choose_card(u64 hand, int trump, int lead_suit, int best_card, int trick_size,
-                       int n, u64 seen, int need, int behind_wants, int scarce) {
+                       int n, u64 seen, int need, int behind_wants, int scarce,
+                       int style, int call) {
     int want = need > 0;
-    if (lead_suit == NO_SUIT) return choose_lead(hand, trump, seen, want);
+    int scramble = want && call > 0 ? style : 0;
+    if (lead_suit == NO_SUIT)
+        return choose_lead(hand, trump, seen, want, scramble & SCRAMBLE_LEAD);
 
     int last = trick_size == n - 1;
     u64 following = hand & T_SUIT[trump][lead_suit];
@@ -268,7 +333,9 @@ static int choose_card(u64 hand, int trump, int lead_suit, int best_card, int tr
             if (!winners) return bottom_of(losers, trump);
             if (last || !behind_wants) return bottom_of(winners, trump);
             int top = top_of(winners, trump);
-            if (is_boss(top, seen, trump) || trick_size * 2 >= n || !losers || scarce) return top;
+            if (is_boss(top, seen, trump) || trick_size * 2 >= n || !losers || scarce
+                    || (scramble & SCRAMBLE_FOLLOW))
+                return top;
             return bottom_of(losers, trump);
         }
         if (losers) return top_of(losers, trump);
@@ -281,9 +348,11 @@ static int choose_card(u64 hand, int trump, int lead_suit, int best_card, int tr
 
     if (want) {
         if (trumps) {
-            if (!trumped) return bottom_of(trumps, trump);
+            int hold = (scramble & SCRAMBLE_RUFF) && !last;
+            if (!trumped)
+                return hold ? holding_ruff(trumps, trump, seen, call) : bottom_of(trumps, trump);
             u64 over = trumps & T_OUT[trump][best_card];
-            if (over) return bottom_of(over, trump);
+            if (over) return hold ? holding_ruff(over, trump, seen, call) : bottom_of(over, trump);
         }
         return sides ? lowest_rank(sides, trump) : bottom_of(trumps, trump);
     }
@@ -312,16 +381,31 @@ static inline int state_card(const State *st, const Table *t) {
         behind_wants = chasing;
         scarce = total > POP(hand);
     }
+    int style = 0, call = 0;
+    if (t->style && (seat == t->hero || t->hero == EVERY_SEAT)) {
+        style = t->style;
+        for (int s = 0; s < t->n; s++)
+            if (st->bids[s] > st->won[s]) call += st->bids[s] - st->won[s];
+        call -= POP(hand);
+    }
     return choose_card(hand, t->trump_suit, st->lead_suit, st->best_card, st->trick_size, t->n,
                        st->played | hand | t->trump_bit, st->bids[seat] - st->won[seat],
-                       behind_wants, scarce);
+                       behind_wants, scarce, style, call);
 }
 
 EXPORT int oh_choose_card(u64 hand, int trump, int lead_suit, int best_card, int trick_size,
                           int n, u64 seen, int need, int behind_wants, int scarce) {
     init_tables();
     return choose_card(hand, trump, lead_suit, best_card, trick_size, n, seen, need,
-                       behind_wants, scarce);
+                       behind_wants, scarce, 0, 0);
+}
+
+EXPORT int oh_choose_card_style(u64 hand, int trump, int lead_suit, int best_card,
+                                int trick_size, int n, u64 seen, int need, int behind_wants,
+                                int scarce, int style, int call) {
+    init_tables();
+    return choose_card(hand, trump, lead_suit, best_card, trick_size, n, seen, need,
+                       behind_wants, scarce, style, call);
 }
 
 /* ------------------------------------------------------------------ */
@@ -333,11 +417,77 @@ static inline u64 legal_mask(u64 hand, int lead_suit, int trump) {
     return follow ? follow : hand;
 }
 
+/* Same 32 public-information inputs as learn/rollout.py. */
+static double rollout_value(const State *st, const Table *t, int card) {
+    const Params *p = t->params;
+    const RolloutNet *net = p->rollout;
+    int seat = st->to_act, trump = t->trump_suit, suit = T_EFF[trump][card];
+    u64 hand = st->hands[seat], above = T_OUT[trump][card];
+    u64 seen = st->played | hand | t->trump_bit, same = T_SUIT[trump][suit];
+    int need = st->bids[seat] - st->won[seat], call = -POP(hand);
+    int vs = 0, vt = 0, wins = st->best_card < 0;
+    if (!wins) {
+        int best_suit = T_EFF[trump][st->best_card];
+        wins = suit == best_suit ? T_POW[trump][card] > T_POW[trump][st->best_card] : suit == trump;
+    }
+    for (int s = 0; s < t->n; s++) {
+        int d = st->bids[s] - st->won[s];
+        if (d > 0) call += d;
+        vs += !!(st->voids[s] & (1 << suit));
+        vt += !!(st->voids[s] & (1 << trump));
+    }
+    float x[32] = {
+        T_POW[trump][card] / 14.0, suit == trump, wins, !(above & ~seen),
+        POP(hand & same) / 10.0, POP(above & ~seen) / 14.0,
+        POP(above & hand) / 14.0, POP(hand & same & ~above & ~(UINT64_C(1) << card)) / 14.0,
+        POP(hand) / 10.0, POP(hand & T_SUIT[trump][trump]) / 10.0,
+        need / 10.0, st->bids[seat] / 10.0, st->won[seat] / 10.0,
+        t->n / 8.0, (double)st->trick_size / t->n, t->hand_size / 10.0,
+        (double)((st->leader - seat + t->n) % t->n) / t->n,
+        (double)((t->dealer - seat + t->n) % t->n) / t->n,
+        st->best_seat < 0 ? -1 : (double)((st->best_seat - seat + t->n) % t->n) / t->n,
+        call / 10.0, p->points_per_trick / 10.0, p->made_zero / 10.0,
+        p->penalty_per_trick / 10.0, st->lead_suit < 0, need <= 0, need >= POP(hand),
+        (double)vs / t->n, (double)vt / t->n, suit == trump, suit == 3 - trump, 0, 0
+    };
+    int at = 30;
+    for (int s = 0; s < 4; s++) if (s != trump && s != 3 - trump) x[at++] = suit == s;
+    float h0[32], h1[16];
+    for (int j = 0; j < 32; j++) {
+        float value = net->b0[j];
+        for (int i = 0; i < 32; i++) value += x[i] * net->w0[i * 32 + j];
+        h0[j] = fmaxf(0, value);
+    }
+    for (int j = 0; j < 16; j++) {
+        float value = net->b1[j];
+        for (int i = 0; i < 32; i++) value += h0[i] * net->w1[i * 16 + j];
+        h1[j] = fmaxf(0, value);
+    }
+    float value = net->b2[0];
+    for (int i = 0; i < 16; i++) value += h1[i] * net->w2[i];
+    return value * 30.0;
+}
+
+static int rollout_card(const State *st, const Table *t) {
+    u64 mask = legal_mask(st->hands[st->to_act], st->lead_suit, t->trump_suit);
+    int best = LOWEST(mask);
+    double value = -1e300;
+    while (mask) {
+        int card = LOWEST(mask);
+        mask &= mask - 1;
+        double v = rollout_value(st, t, card);
+        if (v > value) { value = v; best = card; }
+    }
+    return best;
+}
+
 static inline void play_card(State *st, const Table *t, int card) {
     int seat = st->to_act;
     u64 bit = UINT64_C(1) << card;
     int trump = t->trump_suit;
     int suit = T_EFF[trump][card];
+    if (st->lead_suit >= 0 && suit != st->lead_suit)
+        st->voids[seat] |= 1 << st->lead_suit;
     st->hands[seat] ^= bit;
     st->played |= bit;
     st->table |= bit;
@@ -381,7 +531,10 @@ static void playout(State *st, const Table *t, const double *noise, u64 *rng) {
             while (pick--) mask &= mask - 1;
             card = LOWEST(mask);
         } else {
-            card = state_card(st, t);
+            const Params *p = t->params;
+            card = p && p->rollout && (p->rollout_seats == 2 ||
+                   (p->rollout_seats == 1 && seat == t->root))
+                   ? rollout_card(st, t) : state_card(st, t);
         }
         play_card(st, t, card);
     }
@@ -419,7 +572,9 @@ static inline u64 memo_key(const State *st, const Table *t) {
     return key | 1;
 }
 
-static int distinct_moves(const State *st, const Table *t, int *out) {
+/* Legal cards with interchangeable touching cards merged. If sizes is given,
+ * sizes[i] is how many legal cards out[i] stands for. */
+static int distinct_moves(const State *st, const Table *t, int *out, int *sizes) {
     int trump = t->trump_suit;
     u64 legal = legal_mask(st->hands[st->to_act], st->lead_suit, trump);
     int count = 0;
@@ -438,9 +593,11 @@ static int distinct_moves(const State *st, const Table *t, int *out) {
                 u64 between = above_prev & ~T_OUT[trump][card] & ~(UINT64_C(1) << card);
                 if (same_suit && !(between & live)) {
                     out[count - 1] = card;
+                    if (sizes) sizes[count - 1]++;
                     continue;
                 }
             }
+            if (sizes) sizes[count] = 1;
             out[count++] = card;
         }
     }
@@ -465,7 +622,7 @@ static void solve(const State *st, const Table *t, const Params *p, int root, sh
     }
 
     int moves[13];
-    int count = distinct_moves(st, t, moves);
+    int count = distinct_moves(st, t, moves, NULL);
     int seat = st->to_act;
     short best[MAX_SEATS], current[MAX_SEATS];
     for (int i = 0; i < count; i++) {
@@ -484,8 +641,73 @@ static void solve(const State *st, const Table *t, const Params *p, int root, sh
     }
 }
 
+/* solve() for opponents who sometimes play a random card (search.py
+ * solve_noisy). The seat to move picks its best line, ties going against
+ * root, as in solve(); its value is then
+ *     (1 - noise) * best + noise * (mean over every legal card),
+ * a merged card counting once per legal card it stands for. With no noise
+ * anywhere this equals solve(). noise is fixed for one deal, and the table is
+ * cleared between deals, so it need not be part of the key. */
+typedef struct {
+    u64 key;
+    unsigned stamp;
+    double value[MAX_SEATS];
+} NoisyMemoEntry;
+
+static NoisyMemoEntry noisy_memo[MEMO_SIZE];
+static unsigned noisy_memo_stamp = 0;
+
+static void solve_noisy(const State *st, const Table *t, const Params *p, int root,
+                        const double *noise, double *value) {
+    if (st->done) {
+        for (int i = 0; i < t->n; i++) value[i] = points(p, st->bids[i], st->won[i]);
+        return;
+    }
+
+    NoisyMemoEntry *slot = NULL;
+    u64 key = 0;
+    if (st->trick_size == 0) {
+        key = memo_key(st, t);
+        slot = &noisy_memo[key >> (64 - MEMO_BITS)];
+        if (slot->stamp == noisy_memo_stamp && slot->key == key) {
+            memcpy(value, slot->value, sizeof(double) * MAX_SEATS);
+            return;
+        }
+    }
+
+    int moves[13], sizes[13];
+    int count = distinct_moves(st, t, moves, sizes);
+    int seat = st->to_act;
+    double eps = noise[seat];
+    double best[MAX_SEATS], current[MAX_SEATS], mean[MAX_SEATS] = {0};
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        State child = *st;
+        play_card(&child, t, moves[i]);
+        solve_noisy(&child, t, p, root, noise, current);
+        if (i == 0 || current[seat] > best[seat]
+            || (current[seat] == best[seat] && current[root] < best[root]))
+            memcpy(best, current, sizeof(best));
+        if (eps > 0.0) {
+            for (int s = 0; s < t->n; s++) mean[s] += sizes[i] * current[s];
+            total += sizes[i];
+        }
+    }
+    if (eps > 0.0)
+        for (int s = 0; s < t->n; s++) best[s] = (1.0 - eps) * best[s] + eps * mean[s] / total;
+    memcpy(value, best, sizeof(double) * MAX_SEATS);
+    if (slot) {
+        slot->key = key;
+        slot->stamp = noisy_memo_stamp;
+        memcpy(slot->value, best, sizeof(best));
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Bidding estimates (heuristic.py).                                   */
+
+static int card_win_probs_slow(u64 hand, int trump_card, int n, int hand_size, int leads_first,
+                               double *probs);
 
 static double poisson_at_most(int k, double mean) {
     double term = exp(-mean), total = term;
@@ -496,8 +718,85 @@ static double poisson_at_most(int k, double mean) {
     return total;
 }
 
+/* Per (players, hand size): everything card_win_probs computes from those
+ * alone, so a bid check is lookups and sums. Same formulas, same numbers. */
+typedef struct {
+    int ready;
+    double miss_pow[16];          /* miss ** higher */
+    double reach_any;
+    double safe[11][2][14][14];   /* [trumps held][13-card side suit?][suit length][position] */
+} CwpTable;
+static CwpTable cwp_tables[9][11];
+
+static const CwpTable *cwp_table(int n, int hand_size) {
+    CwpTable *t = &cwp_tables[n][hand_size];
+    if (t->ready) return t;
+    double unseen = 51 - hand_size;
+    double miss = 1.0 - (n - 1) * hand_size / unseen;
+    if (miss < 0.0) miss = 0.0;
+    for (int k = 0; k < 16; k++) t->miss_pow[k] = pow(miss, k);
+    t->reach_any = 1.0 - pow(0.75, hand_size);
+    for (int held = 0; held <= 10; held++) {
+        int other_trumps = 14 - held - 1;
+        double opponent_has_trump = 1.0 - exp(-(hand_size * other_trumps / unseen));
+        for (int full = 0; full < 2; full++) {
+            int size = full ? 13 : 12;
+            for (int length = 0; length < 14; length++)
+                for (int position = 0; position < 14; position++) {
+                    double opponent_length = hand_size * (double)(size - length) / unseen;
+                    double risk = poisson_at_most(position, opponent_length);
+                    t->safe[held][full][length][position] = pow(1.0 - risk * opponent_has_trump, n - 1);
+                }
+        }
+    }
+    t->ready = 1;
+    return t;
+}
+
+static int card_win_probs_fast(u64 hand, int trump_card, int n, int hand_size, int leads_first,
+                               double *probs) {
+    int trump = SUIT_OF(trump_card);
+    const CwpTable *tab = cwp_table(n, hand_size);
+    u64 seen = hand | (UINT64_C(1) << trump_card);
+    int trump_held = POP(hand & T_SUIT[trump][trump]);
+    int short_sides = 0;
+    for (int s = 0; s < 4; s++)
+        if (s != trump && POP(hand & T_SUIT[trump][s]) <= 1) short_sides++;
+    double ruff = 0.0;
+    if (hand_size >= 3) {
+        ruff = 0.10 * (trump_held - 1) + 0.12 * short_sides;
+        if (ruff > 0.55) ruff = 0.55;
+    }
+    int count = 0;
+    for (int suit = 0; suit < 4; suit++) {
+        u64 cards = hand & T_SUIT[trump][suit];
+        int length = POP(cards), position = 0;
+        int full = POP(T_SUIT[trump][suit]) == 13;
+        while (cards) {
+            int card = top_of(cards, trump);
+            cards ^= UINT64_C(1) << card;
+            double clear = tab->miss_pow[POP(T_OUT[trump][card] & ~seen)];
+            if (suit == trump) {
+                probs[count++] = clear + (1.0 - clear) * ruff;
+            } else {
+                double reached = (leads_first && position == 0) ? 1.0 : tab->reach_any;
+                probs[count++] = clear * tab->safe[trump_held][full][length][position] * reached;
+            }
+            position++;
+        }
+    }
+    return count;
+}
+
 static int card_win_probs(u64 hand, int trump_card, int n, int hand_size, int leads_first,
                           double *probs) {
+    if (n >= 2 && n <= 8 && hand_size >= 1 && hand_size <= 10)
+        return card_win_probs_fast(hand, trump_card, n, hand_size, leads_first, probs);
+    return card_win_probs_slow(hand, trump_card, n, hand_size, leads_first, probs);
+}
+
+static int card_win_probs_slow(u64 hand, int trump_card, int n, int hand_size, int leads_first,
+                               double *probs) {
     int trump = SUIT_OF(trump_card);
     u64 seen = hand | (UINT64_C(1) << trump_card);
     double unseen = 51 - hand_size;
@@ -916,12 +1215,34 @@ static int sample_hands(const Obs *obs, u64 *hands, u64 *rng) {
     capacity[bins_count] = unknown_count - assigned;
     voids[bins_count] = 0;
     bins_count++;
+    u64 bins[MAX_SEATS + 1];
+
+    int any_void = 0;
+    for (int b = 0; b < bins_count; b++) any_void |= voids[b];
+    if (!any_void) {
+        /* No shown voids: a partial Fisher-Yates shuffle, cutting each hand off
+         * the front, is uniform over the consistent deals. */
+        int at = 0;
+        for (int b = 0; b < bins_count - 1; b++) {
+            u64 hand = 0;
+            for (int k = 0; k < capacity[b]; k++, at++) {
+                int j = at + next_below(rng, unknown_count - at), tmp = unknown[at];
+                unknown[at] = unknown[j];
+                unknown[j] = tmp;
+                hand |= UINT64_C(1) << unknown[at];
+            }
+            bins[b] = hand;
+        }
+        for (int i = 0; i < obs->n; i++) hands[i] = 0;
+        hands[obs->seat] = obs->hand;
+        for (int i = 0; i < obs->n - 1; i++) hands[others[i]] = bins[i];
+        return 1;
+    }
 
     int pressure[4] = {0, 0, 0, 0};
     for (int s = 0; s < 4; s++)
         for (int b = 0; b < bins_count; b++) pressure[s] += (voids[b] >> s) & 1;
 
-    u64 bins[MAX_SEATS + 1];
     int ordered[52], done = 0;
     for (int attempt = 0; attempt < 40 && !done; attempt++) {
         for (int i = unknown_count - 1; i > 0; i--) {
@@ -929,16 +1250,26 @@ static int sample_hands(const Obs *obs, u64 *hands, u64 *rng) {
             unknown[i] = unknown[j];
             unknown[j] = tmp;
         }
-        int fill = 0;
-        for (int level = bins_count; level >= 0; level--)
-            for (int i = 0; i < unknown_count; i++)
-                if (pressure[suit_of[unknown[i]]] == level) ordered[fill++] = unknown[i];
+        int start[MAX_SEATS + 3] = {0};
+        for (int i = 0; i < unknown_count; i++) start[bins_count - pressure[suit_of[unknown[i]]] + 1]++;
+        for (int l = 1; l <= bins_count + 1; l++) start[l] += start[l - 1];
+        for (int i = 0; i < unknown_count; i++)
+            ordered[start[bins_count - pressure[suit_of[unknown[i]]]]++] = unknown[i];
 
         int room[MAX_SEATS + 1];
         memcpy(room, capacity, sizeof(int) * bins_count);
         memset(bins, 0, sizeof(u64) * bins_count);
         done = 1;
         for (int i = 0; i < unknown_count; i++) {
+            if (!pressure[suit_of[ordered[i]]]) {
+                /* Every card from here on can go to any bin: cut the rest of
+                 * this random order into the free room (same distribution as
+                 * placing them one by one in proportion to room). */
+                int at = i;
+                for (int b = 0; b < bins_count; b++)
+                    for (int k = 0; k < room[b]; k++) bins[b] |= UINT64_C(1) << ordered[at++];
+                break;
+            }
             int suit_bit = 1 << suit_of[ordered[i]];
             int total = 0;
             for (int b = 0; b < bins_count; b++)
@@ -975,19 +1306,102 @@ static int sample_hands(const Obs *obs, u64 *hands, u64 *rng) {
     return 1;
 }
 
-static int draw_kind(const Params *p, u64 *rng) {
+static int draw_kind(const Params *p, int seat, u64 *rng) {
+    const double *weights = p->seat_priors ? p->seat_weights[seat] : p->weights;
     double roll = next_double(rng), total = 0.0;
-    for (int i = 0; i < MAX_KINDS; i++) total += p->weights[i];
+    for (int i = 0; i < MAX_KINDS; i++) total += weights[i];
     roll *= total;
     for (int i = 0; i < MAX_KINDS; i++) {
-        if (roll < p->weights[i]) return i;
-        roll -= p->weights[i];
+        if (roll < weights[i]) return i;
+        roll -= weights[i];
     }
     return 0;
 }
 
+/* Public replay of an observation's history, shared by all candidate deals:
+ * the state before each past play (hands left out), what that seat had
+ * already played, and log(chance) for each kind, option count and match. */
+static int replay_trusted;  /* set while make_worlds_counted scores one observation */
+static struct {
+    u64 key;
+    const Params *params;
+    int len;
+    State before[52];
+    u64 played_before[52];
+    double logs[MAX_KINDS][14][2];
+} replay_cache;
+
+static u64 replay_key(const Obs *obs) {
+    u64 key = mix64((u64)obs->history_len * 1315423911u ^ obs->hand ^ (obs->played << 1)
+                    ^ ((u64)obs->trump_card << 56) ^ ((u64)obs->dealer << 48) ^ ((u64)obs->seat << 40));
+    for (int i = 0; i < obs->history_len; i++)
+        key = mix64(key ^ ((u64)obs->history_card[i] << 8 | (u64)obs->history_seat[i]));
+    for (int s = 0; s < obs->n; s++) key = mix64(key ^ (u64)(obs->bids[s] + 7) << (s * 4));
+    return key | 1;
+}
+
+static void build_replay(const Obs *obs, const Params *p, const Table *t) {
+    State st;
+    memset(&st, 0, sizeof(st));
+    memcpy(st.bids, obs->bids, sizeof(int) * obs->n);
+    st.lead_suit = NO_SUIT;
+    st.best_card = NO_CARD;
+    st.best_seat = -1;
+    st.leader = st.to_act = (obs->dealer + 1) % obs->n;
+    u64 by_seat[MAX_SEATS] = {0};
+    for (int i = 0; i < obs->history_len; i++) {
+        int seat = obs->history_seat[i], card = obs->history_card[i];
+        st.to_act = seat;
+        replay_cache.before[i] = st;
+        replay_cache.played_before[i] = by_seat[seat];
+        /* advance the public state; play_card only removes the card from a hand */
+        st.hands[seat] |= UINT64_C(1) << card;
+        play_card(&st, t, card);
+        by_seat[seat] |= UINT64_C(1) << card;
+    }
+    for (int k = 0; k < MAX_KINDS; k++) {
+        double doubt = p->kinds[k].play_doubt;
+        for (int options = 2; options < 14; options++) {
+            replay_cache.logs[k][options][0] = log(doubt / options);
+            replay_cache.logs[k][options][1] = log(doubt / options + (1.0 - doubt));
+        }
+    }
+    replay_cache.len = obs->history_len;
+    replay_cache.params = p;
+    replay_cache.key = replay_key(obs);
+}
+
+static double play_log_weight_cached(const Obs *obs, const Params *p, const Table *t,
+                                     const u64 *opening, const int *kinds) {
+    if (!replay_trusted) {
+        u64 key = replay_key(obs);
+        if (replay_cache.key != key || replay_cache.params != p) build_replay(obs, p, t);
+    }
+    double total = 0.0;
+    for (int i = 0; i < replay_cache.len; i++) {
+        int seat = obs->history_seat[i];
+        if (seat == obs->seat) continue;
+        State *st = &replay_cache.before[i];
+        u64 hand = opening[seat] & ~replay_cache.played_before[i];
+        int options = POP(legal_mask(hand, st->lead_suit, t->trump_suit));
+        if (options > 1) {
+            double doubt = p->kinds[kinds[seat]].play_doubt;
+            int match = 0;
+            if (doubt < 1.0) {
+                st->hands[seat] = hand;
+                match = state_card(st, t) == obs->history_card[i];
+                st->hands[seat] = 0;
+            }
+            total += replay_cache.logs[kinds[seat]][options][match];
+        }
+    }
+    return total;
+}
+
 static double play_log_weight(const Obs *obs, const Params *p, const Table *t,
                               const u64 *opening, const int *kinds) {
+    if (!(p->policy_inference && p->rollout))
+        return play_log_weight_cached(obs, p, t, opening, kinds);
     State st;
     memset(&st, 0, sizeof(st));
     memcpy(st.hands, opening, sizeof(u64) * obs->n);
@@ -1005,7 +1419,24 @@ static double play_log_weight(const Obs *obs, const Params *p, const Table *t,
             if (options > 1) {
                 double doubt = p->kinds[kinds[seat]].play_doubt;
                 double chance = doubt / options;
-                if (doubt < 1.0 && state_card(&st, t) == card) chance += 1.0 - doubt;
+                if (p->policy_inference && p->rollout) {
+                    u64 mask = legal_mask(st.hands[seat], st.lead_suit, t->trump_suit);
+                    double scores[52], top = -1e300, total_prob = 0, chosen = 0;
+                    int count = 0, chosen_index = -1;
+                    while (mask) {
+                        int c = LOWEST(mask); mask &= mask - 1;
+                        if (c == card) chosen_index = count;
+                        scores[count] = rollout_value(&st, t, c) / p->policy_temperature;
+                        if (scores[count] > top) top = scores[count];
+                        count++;
+                    }
+                    for (int j = 0; j < count; j++) {
+                        double prob = exp(scores[j] - top);
+                        total_prob += prob;
+                        if (j == chosen_index) chosen = prob;
+                    }
+                    chance += (1.0 - doubt) * chosen / total_prob;
+                } else if (doubt < 1.0 && state_card(&st, t) == card) chance += 1.0 - doubt;
                 total += log(chance);
             }
         }
@@ -1032,9 +1463,21 @@ static double log_weight(const Obs *obs, const Params *p, const Table *t, const 
             total -= error * error / (2.0 * sigma * sigma) + log(sigma);
         }
     }
-    if (obs->phase == PLAYING && obs->history_len)
+    if (obs->phase == PLAYING && obs->history_len && !p->bid_only)
         total += play_log_weight(obs, p, t, opening, w->kinds);
     return total;
+}
+
+EXPORT double oh_world_log_weight(const Obs *obs, const Params *p, const u64 *hands,
+                                  const int *kinds) {
+    init_tables();
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
+    World world = {0};
+    memcpy(world.hands, hands, obs->n * sizeof(u64));
+    memcpy(world.kinds, kinds, obs->n * sizeof(int));
+    return log_weight(obs, p, &t, &world);
 }
 
 #define MAX_CANDIDATES 4096
@@ -1043,35 +1486,79 @@ static double cumulative[MAX_CANDIDATES];
 
 static int draw_world(const Obs *obs, const Params *p, World *w, u64 *rng) {
     if (!sample_hands(obs, w->hands, rng)) return 0;
-    for (int s = 0; s < obs->n; s++) w->kinds[s] = draw_kind(p, rng);
+    for (int s = 0; s < obs->n; s++) w->kinds[s] = draw_kind(p, s, rng);
     w->kinds[obs->seat] = 0; /* slot 0 is the skilled kind: no card noise */
     return 1;
 }
 
-static int make_worlds(const Obs *obs, const Params *p, const Table *t, World *out, int count,
-                       u64 *rng) {
+static int picked[MAX_CANDIDATES];
+
+/* Candidates sampled independently can also contain the same complete world.
+ * Merge by hands AND kinds, not only by the resampling pool's array index. */
+static int merge_worlds(World *worlds, int *copies, int count, int n) {
+    int slots[2048], unique = 0;
+    memset(slots, -1, sizeof(slots));
+    for (int i = 0; i < count; i++) {
+        u64 hash = UINT64_C(1469598103934665603);
+        for (int s = 0; s < n; s++) {
+            hash ^= worlds[i].hands[s] + (u64)worlds[i].kinds[s];
+            hash *= UINT64_C(1099511628211);
+            hash ^= hash >> 32;
+        }
+        int at = hash & 2047;
+        while (slots[at] >= 0) {
+            int j = slots[at];
+            if (!memcmp(worlds[j].hands, worlds[i].hands, n * sizeof(u64)) &&
+                    !memcmp(worlds[j].kinds, worlds[i].kinds, n * sizeof(int))) {
+                copies[j] += copies[i];
+                break;
+            }
+            at = (at + 1) & 2047;
+        }
+        if (slots[at] < 0) {
+            slots[at] = unique;
+            worlds[unique] = worlds[i];
+            copies[unique++] = copies[i];
+        }
+    }
+    return unique;
+}
+
+/* Fills out with count deals and returns count, or 0 on failure. With
+ * copies, repeated draws of one candidate are merged: out gets the distinct
+ * deals, copies how often each was drawn, and the return is how many. */
+static int make_worlds_counted(const Obs *obs, const Params *p, const Table *t, World *out,
+                               int count, int *copies, u64 *rng) {
     int evidence = 0;
     for (int s = 0; s < obs->n; s++)
         if (s != obs->seat && obs->bids[s] != NO_BID) evidence = 1;
 
     if (!p->inference || !evidence) {
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < count; i++) {
             if (!draw_world(obs, p, &out[i], rng)) return 0;
-        return 1;
+            if (copies) copies[i] = 1;
+        }
+        return copies ? merge_worlds(out, copies, count, obs->n) : count;
     }
 
     int total = count * p->oversample;
     if (total > MAX_CANDIDATES) total = MAX_CANDIDATES;
     double logs[MAX_CANDIDATES], top = -1e300;
+    if (obs->phase == PLAYING && obs->history_len && !(p->policy_inference && p->rollout)) {
+        build_replay(obs, p, t);
+        replay_trusted = 1;
+    }
     for (int i = 0; i < total; i++) {
-        if (!draw_world(obs, p, &candidates[i], rng)) return 0;
+        if (!draw_world(obs, p, &candidates[i], rng)) { replay_trusted = 0; return 0; }
         logs[i] = log_weight(obs, p, t, &candidates[i]);
         if (logs[i] > top) top = logs[i];
     }
+    replay_trusted = 0;
     double running = 0.0;
     for (int i = 0; i < total; i++) {
         running += exp(logs[i] - top);
         cumulative[i] = running;
+        picked[i] = 0;
     }
     for (int i = 0; i < count; i++) {
         double roll = next_double(rng) * running;
@@ -1081,9 +1568,23 @@ static int make_worlds(const Obs *obs, const Params *p, const Table *t, World *o
             if (cumulative[mid] <= roll) low = mid + 1;
             else high = mid;
         }
-        out[i] = candidates[low];
+        if (copies) picked[low]++;
+        else out[i] = candidates[low];
     }
-    return 1;
+    if (!copies) return count;
+    int distinct = 0;
+    for (int i = 0; i < total; i++) {
+        if (picked[i]) {
+            out[distinct] = candidates[i];
+            copies[distinct++] = picked[i];
+        }
+    }
+    return merge_worlds(out, copies, distinct, obs->n);
+}
+
+static int make_worlds(const Obs *obs, const Params *p, const Table *t, World *out, int count,
+                       u64 *rng) {
+    return make_worlds_counted(obs, p, t, out, count, NULL, rng) != 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1095,6 +1596,7 @@ static State state_from_obs(const Obs *obs, const u64 *hands) {
     memcpy(st.hands, hands, sizeof(u64) * obs->n);
     memcpy(st.bids, obs->bids, sizeof(int) * obs->n);
     memcpy(st.won, obs->tricks_won, sizeof(int) * obs->n);
+    memcpy(st.voids, obs->voids, sizeof(int) * obs->n);
     st.played = obs->played;
     st.table = obs->table;
     st.to_act = obs->to_act;
@@ -1106,25 +1608,106 @@ static State state_from_obs(const Obs *obs, const u64 *hands) {
     return st;
 }
 
+EXPORT void oh_rollout_values(const Obs *obs, const Params *p, const int *cards,
+                              int ncards, double *values) {
+    init_tables();
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
+    u64 hands[MAX_SEATS] = {0};
+    hands[obs->seat] = obs->hand;
+    State st = state_from_obs(obs, hands);
+    for (int c = 0; c < ncards; c++) values[c] = rollout_value(&st, &t, cards[c]);
+}
+
+/* Deterministic known-deal diagnostic. Hidden hands drive game transitions,
+ * never the policy's features. Not used to choose real moves. */
+EXPORT void oh_rollout_scores(const Obs *obs, const Params *p, const u64 *hands,
+                              const int *cards, int ncards, double *values) {
+    init_tables();
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
+    State base = state_from_obs(obs, hands);
+    double noise[MAX_SEATS] = {0};
+    u64 rng = 1;
+    for (int c = 0; c < ncards; c++) {
+        State child = base;
+        play_card(&child, &t, cards[c]);
+        playout(&child, &t, noise, &rng);
+        values[c] = points(p, child.bids[obs->seat], child.won[obs->seat]);
+    }
+}
+
+/* Known-deal diagnostic for solve_noisy: our points after each card, each
+ * seat playing a random legal card with chance noise[seat] (ours ignored). */
+EXPORT void oh_solve_noisy_known(const Obs *obs, const Params *p, const u64 *hands,
+                                 const double *noise, const int *cards, int ncards,
+                                 double *values) {
+    init_tables();
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
+    State base = state_from_obs(obs, hands);
+    double own[MAX_SEATS], value[MAX_SEATS];
+    memcpy(own, noise, sizeof(own));
+    own[obs->seat] = 0.0;
+    if (++noisy_memo_stamp == 0) {
+        memset(noisy_memo, 0, sizeof(noisy_memo));
+        noisy_memo_stamp = 1;
+    }
+    for (int c = 0; c < ncards; c++) {
+        State child = base;
+        play_card(&child, &t, cards[c]);
+        solve_noisy(&child, &t, p, obs->seat, own, value);
+        values[c] = value[obs->seat];
+    }
+}
+
 #define MAX_WORLDS 1024
 static World worlds_buffer[MAX_WORLDS];
+static int copies_buffer[MAX_WORLDS];
+static long last_card_worlds = 0, last_card_playouts = 0;
+
+/* Deals counted by the last oh_evaluate_cards call, and how many of them it
+ * actually played out (fewer when dedupe merged repeats). */
+EXPORT long oh_last_card_worlds(void) { return last_card_worlds; }
+EXPORT long oh_last_card_playouts(void) { return last_card_playouts; }
 
 /* Fills means[i] with the average points after cards[i]. Returns 0 on failure. */
 EXPORT int oh_evaluate_cards(const Obs *obs, const Params *p, const int *cards, int ncards,
                              double *means, u64 *rng) {
     init_tables();
-    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react};
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
     int count = p->worlds > MAX_WORLDS ? MAX_WORLDS : p->worlds;
     double stop = p->time_limit > 0.0 ? now_seconds() + p->time_limit : 0.0;
     int remaining = POP(obs->hand) * obs->n - obs->trick_size;
     int exact = remaining <= p->endgame_cards;
-    long done = 0;
+    long done = 0, played = 0;
+    double differences[52][52] = {{0}};
+    /* Reordering stochastic continuations would change the RNG stream. Only
+     * deterministic fields may merge repeats, preserving fixed-budget values. */
+    int dedupe = p->dedupe;
+    for (int k = 0; k < MAX_KINDS; k++) {
+        if (p->kinds[k].card_noise <= 0) continue;
+        if (p->weights[k] > 0 && !p->seat_priors) dedupe = 0;
+        if (p->seat_priors)
+            for (int s = 0; s < obs->n; s++)
+                if (s != obs->seat && p->seat_weights[s][k] > 0) dedupe = 0;
+    }
     for (int c = 0; c < ncards; c++) means[c] = 0.0;
 
     do {
-        if (!make_worlds(obs, p, &t, worlds_buffer, count, rng)) return 0;
-        for (int w = 0; w < count; w++) {
+        int made = make_worlds_counted(obs, p, &t, worlds_buffer, count,
+                                       dedupe ? copies_buffer : NULL, rng);
+        if (!made) return 0;
+        for (int w = 0; w < made; w++) {
             const World *world = &worlds_buffer[w];
+            int copies = dedupe ? copies_buffer[w] : 1;
+            double before[52];
+            if (p->stop_z > 0) memcpy(before, means, ncards * sizeof(double));
             State base = state_from_obs(obs, world->hands);
             double noise[MAX_SEATS];
             int noisy = 0;
@@ -1132,7 +1715,21 @@ EXPORT int oh_evaluate_cards(const Obs *obs, const Params *p, const int *cards, 
                 noise[s] = p->kinds[world->kinds[s]].card_noise;
                 if (noise[s] > 0.0) noisy = 1;
             }
-            if (exact && !noisy) {
+            if (exact && noisy && p->endgame_noise) {
+                double value[MAX_SEATS];
+                noise[obs->seat] = 0.0;
+                if (++noisy_memo_stamp == 0) {
+                    memset(noisy_memo, 0, sizeof(noisy_memo));
+                    noisy_memo_stamp = 1;
+                }
+                for (int c = 0; c < ncards; c++) {
+                    State child = base;
+                    play_card(&child, &t, cards[c]);
+                    solve_noisy(&child, &t, p, obs->seat, noise, value);
+                    means[c] += copies * value[obs->seat];
+                }
+                played++;
+            } else if (exact && !noisy) {
                 short value[MAX_SEATS];
                 if (++memo_stamp == 0) {
                     memset(memo, 0, sizeof(memo));
@@ -1142,23 +1739,53 @@ EXPORT int oh_evaluate_cards(const Obs *obs, const Params *p, const int *cards, 
                     State child = base;
                     play_card(&child, &t, cards[c]);
                     solve(&child, &t, p, obs->seat, value);
-                    means[c] += value[obs->seat];
+                    means[c] += copies * value[obs->seat];
                 }
+                played++;
             } else {
-                for (int c = 0; c < ncards; c++) {
-                    State child = base;
-                    play_card(&child, &t, cards[c]);
-                    playout(&child, &t, noise, rng);
-                    means[c] += points(p, child.bids[obs->seat], child.won[obs->seat]);
+                /* A play-out with no random cards repeats exactly, so one
+                 * stands for every copy; noisy ones are played afresh. */
+                int repeats = noisy ? copies : 1, each = noisy ? 1 : copies;
+                for (int r = 0; r < repeats; r++) {
+                    for (int c = 0; c < ncards; c++) {
+                        State child = base;
+                        play_card(&child, &t, cards[c]);
+                        playout(&child, &t, noise, rng);
+                        means[c] += each * points(p, child.bids[obs->seat], child.won[obs->seat]);
+                    }
+                    played++;
                 }
             }
-            done++;
+            done += copies;
+            if (p->stop_z > 0) {
+                for (int a = 0; a < ncards; a++)
+                    for (int b = 0; b < a; b++) {
+                        double d = ((means[a] - before[a]) - (means[b] - before[b])) / copies;
+                        differences[a][b] += copies * d * d;
+                    }
+            }
             if (stop > 0.0 && now_seconds() >= stop) goto finished;
+            if (stop == 0.0 && p->budget > 0 && done >= p->budget) goto finished;
         }
-    } while (stop > 0.0);
+        /* A heuristic stopping rule, NOT a sequential confidence guarantee.
+         * Paired differences share each world. Resampled worlds are correlated. */
+        if (!exact && p->stop_z > 0 && done >= p->stop_min && ncards > 1) {
+            int best = 0, clear = 1;
+            for (int c = 1; c < ncards; c++) if (means[c] > means[best]) best = c;
+            for (int c = 0; c < ncards; c++) if (c != best) {
+                double gap = (means[best] - means[c]) / done;
+                int a = best > c ? best : c, b = best > c ? c : best;
+                double variance = fmax(0, (differences[a][b] - done * gap * gap) / (done - 1));
+                if (gap <= 1.0 + p->stop_z * sqrt(variance / done)) clear = 0;
+            }
+            if (clear) goto finished;
+        }
+    } while (stop > 0.0 || done < p->budget);
 
 finished:
     for (int c = 0; c < ncards; c++) means[c] /= (double)done;
+    last_card_worlds = done;
+    last_card_playouts = played;
     return 1;
 }
 
@@ -1166,7 +1793,9 @@ finished:
 EXPORT int oh_analyse_bids(const Obs *obs, const Params *p, int dealer_restriction,
                            const int *options, int noptions, double *counts, u64 *rng) {
     init_tables();
-    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react};
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
     int count = p->worlds > MAX_WORLDS ? MAX_WORLDS : p->worlds;
     double stop = p->time_limit > 0.0 ? now_seconds() + p->time_limit : 0.0;
     int width = obs->hand_size + 1;
@@ -1204,9 +1833,346 @@ EXPORT int oh_analyse_bids(const Obs *obs, const Params *p, int dealer_restricti
             }
             done++;
             if (stop > 0.0 && now_seconds() >= stop) return done;
+            if (stop == 0.0 && p->budget > 0 && done >= p->budget) return done;
         }
-    } while (stop > 0.0);
+    } while (stop > 0.0 || done < p->budget);
     return done;
+}
+
+/* ------------------------------------------------------------------ */
+/* Learned value of a full deal for bidding (learn/value_bid.py).       */
+/* The layout of the inputs must match value_bid.features exactly.     */
+
+#define VALUE_OWNERS 10
+#define VALUE_UPCARD 8
+#define VALUE_UNDEALT 9
+#define VALUE_INPUTS 587
+#define VALUE_AT_BIDS 520
+#define VALUE_AT_N 552
+#define VALUE_AT_HAND 558
+#define VALUE_AT_POS 568
+#define VALUE_AT_CALL 576
+#define VALUE_AT_TYPE 583
+#define VALUE_MAX_HIDDEN 512
+
+typedef struct {
+    const float *w0, *b0, *w1, *b1, *w2, *b2; /* row-major (inputs x outputs) */
+    int inputs, h1, h2, outputs;
+} ValueNet;
+
+static int value_slot[4][52];
+static int value_ready = 0;
+
+static void value_tables(void) {
+    if (value_ready) return;
+    for (int t = 0; t < 4; t++) {
+        int partner = 3 - t, order[4] = {t, partner, 0, 0}, k = 2, next = 0;
+        for (int s = 0; s < 4; s++) if (s != t && s != partner) order[k++] = s;
+        for (int g = 0; g < 4; g++)
+            for (int power = 14; power >= 0; power--)
+                for (int c = 0; c < 52; c++)
+                    if (T_EFF[t][c] == order[g] && T_POW[t][c] == power) value_slot[t][c] = next++;
+    }
+    value_ready = 1;
+}
+
+static inline void value_add_row(float *h, const ValueNet *net, int row, float x) {
+    const float *w = net->w0 + (size_t)row * net->h1;
+    for (int j = 0; j < net->h1; j++) h[j] += x * w[j];
+}
+
+/* Layers two and three from the first layer's ReLU output h, row by row
+ * (contiguous weights), skipping inactive units. */
+static void value_hidden(const ValueNet *net, const float *h, float *g, float *out) {
+    memcpy(g, net->b1, sizeof(float) * net->h2);
+    for (int i = 0; i < net->h1; i++) {
+        float x = h[i];
+        if (x <= 0.0f) continue;
+        const float *w = net->w1 + (size_t)i * net->h2;
+        for (int j = 0; j < net->h2; j++) g[j] += x * w[j];
+    }
+    memcpy(out, net->b2, sizeof(float) * net->outputs);
+    for (int i = 0; i < net->h2; i++) {
+        float x = g[i];
+        if (x <= 0.0f) { g[i] = 0.0f; continue; }
+        const float *w = net->w2 + (size_t)i * net->outputs;
+        for (int k = 0; k < net->outputs; k++) out[k] += x * w[k];
+    }
+}
+
+/* Adds to dist[0..hand_size] the predicted chance of each trick count for
+ * the hero, given the first-layer sum of the deal part (base) and all bids. */
+static void value_finish(const ValueNet *net, const float *base, const int *bids, int n,
+                         int hand_size, int hero, double *dist) {
+    float h[VALUE_MAX_HIDDEN], g[VALUE_MAX_HIDDEN], out[16];
+    memcpy(h, base, sizeof(float) * net->h1);
+    int sum = 0;
+    for (int rel = 0; rel < n; rel++) {
+        int bid = bids[(hero + rel) % n];
+        int at = VALUE_AT_BIDS + 4 * rel;
+        sum += bid;
+        value_add_row(h, net, at, 1.0f);
+        if (bid) {
+            value_add_row(h, net, at + 1, bid / 10.0f);
+            value_add_row(h, net, at + 3, (float)bid / hand_size);
+        } else {
+            value_add_row(h, net, at + 2, 1.0f);
+        }
+    }
+    int call = sum - hand_size;
+    call = call < -3 ? -3 : call > 3 ? 3 : call;
+    value_add_row(h, net, VALUE_AT_CALL + call + 3, 1.0f);
+    for (int j = 0; j < net->h1; j++) h[j] = h[j] > 0.0f ? h[j] : 0.0f;
+    value_hidden(net, h, g, out);
+    float top = -1e30f;
+    for (int k = 0; k <= hand_size; k++) if (out[k] > top) top = out[k];
+    double total = 0.0;
+    for (int k = 0; k <= hand_size; k++) total += (out[k] = expf(out[k] - top));
+    for (int k = 0; k <= hand_size; k++) dist[k] += out[k] / total;
+}
+
+/* First-layer sum for one deal: cards, table size, hand size, position, type. */
+static void value_base(const ValueNet *net, const u64 *hands, int n, int trump_card,
+                       int hand_size, int dealer, int hero, int type, float *h) {
+    int trump = SUIT_OF(trump_card);
+    int owner[52];
+    for (int c = 0; c < 52; c++) owner[c] = VALUE_UNDEALT;
+    owner[trump_card] = VALUE_UPCARD;
+    for (int s = 0; s < n; s++) {
+        u64 m = hands[s];
+        while (m) { int c = LOWEST(m); m &= m - 1; owner[c] = (s - hero + n) % n; }
+    }
+    memcpy(h, net->b0, sizeof(float) * net->h1);
+    for (int c = 0; c < 52; c++) value_add_row(h, net, value_slot[trump][c] * VALUE_OWNERS + owner[c], 1.0f);
+    value_add_row(h, net, VALUE_AT_N + n - 3, 1.0f);
+    value_add_row(h, net, VALUE_AT_HAND + hand_size - 1, 1.0f);
+    value_add_row(h, net, VALUE_AT_POS + ((hero - dealer - 1) % n + n) % n, 1.0f);
+    value_add_row(h, net, VALUE_AT_TYPE + type, 1.0f);
+}
+
+/* One deal's predicted trick odds, for checking against value_bid.predict. */
+EXPORT void oh_value_odds(const ValueNet *net, const u64 *hands, int n, int trump_card,
+                          int hand_size, int dealer, const int *bids, int hero, int type,
+                          double *dist) {
+    init_tables();
+    value_tables();
+    float base[VALUE_MAX_HIDDEN];
+    memset(dist, 0, sizeof(double) * (hand_size + 1));
+    value_base(net, hands, n, trump_card, hand_size, dealer, hero, type, base);
+    value_finish(net, base, bids, n, hand_size, hero, dist);
+}
+
+/* As oh_analyse_bids, and for every deal and option also adds the value
+ * network's trick odds to vcounts. With playouts 0 the play-outs are skipped
+ * (counts stay zero). Returns the deals used. */
+EXPORT int oh_analyse_bids_value(const Obs *obs, const Params *p, int dealer_restriction,
+                                 const int *options, int noptions, double *counts,
+                                 double *vcounts, const ValueNet *net, int playouts, u64 *rng) {
+    init_tables();
+    value_tables();
+    if (net->inputs != VALUE_INPUTS || net->h1 > VALUE_MAX_HIDDEN || net->h2 > VALUE_MAX_HIDDEN
+            || net->outputs > 16 || obs->hand_size + 1 > net->outputs) return -1;
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
+    int count = p->worlds > MAX_WORLDS ? MAX_WORLDS : p->worlds;
+    double stop = p->time_limit > 0.0 ? now_seconds() + p->time_limit : 0.0;
+    int width = obs->hand_size + 1;
+    int first = (obs->dealer + 1) % obs->n;
+    int done = 0;
+    float base[VALUE_MAX_HIDDEN];
+    memset(counts, 0, sizeof(double) * noptions * width);
+    memset(vcounts, 0, sizeof(double) * noptions * width);
+
+    do {
+        if (!make_worlds(obs, p, &t, worlds_buffer, count, rng)) return 0;
+        for (int w = 0; w < count; w++) {
+            const World *world = &worlds_buffer[w];
+            State base_state = state_from_obs(obs, world->hands);
+            base_state.leader = base_state.to_act = first;
+            double noise[MAX_SEATS];
+            for (int s = 0; s < obs->n; s++) {
+                noise[s] = p->kinds[world->kinds[s]].card_noise;
+                if (obs->bids[s] == NO_BID && s != obs->seat) {
+                    int bid = heuristic_bid(world->hands[s], obs->trump_card, obs->n,
+                                            obs->hand_size, s, obs->dealer, p);
+                    base_state.bids[s] = noisy_bid(bid, &p->kinds[world->kinds[s]],
+                                                   obs->hand_size, rng);
+                }
+            }
+            value_base(net, world->hands, obs->n, obs->trump_card, obs->hand_size,
+                       obs->dealer, obs->seat, 0, base);
+            for (int o = 0; o < noptions; o++) {
+                State child = base_state;
+                child.bids[obs->seat] = options[o];
+                if (dealer_restriction && obs->seat != obs->dealer
+                        && obs->bids[obs->dealer] == NO_BID) {
+                    int sum = 0;
+                    for (int s = 0; s < obs->n; s++) sum += child.bids[s];
+                    if (sum == obs->hand_size)
+                        child.bids[obs->dealer] += child.bids[obs->dealer] == 0 ? 1 : -1;
+                }
+                value_finish(net, base, child.bids, obs->n, obs->hand_size, obs->seat,
+                             vcounts + o * width);
+                if (playouts) {
+                    playout(&child, &t, noise, rng);
+                    counts[o * width + child.won[obs->seat]] += 1.0;
+                }
+            }
+            done++;
+            if (stop > 0.0 && now_seconds() >= stop) return done;
+            if (stop == 0.0 && p->budget > 0 && done >= p->budget) return done;
+        }
+    } while (stop > 0.0 || done < p->budget);
+    return done;
+}
+
+/* ------------------------------------------------------------------ */
+/* Learned value of a trick-start position for card play               */
+/* (learn/value_play.py). Inputs must match value_play.features.       */
+
+#define VPLAY_OWNERS 11
+#define VPLAY_PLAYED 8
+#define VPLAY_UPCARD 9
+#define VPLAY_UNDEALT 10
+#define VPLAY_INPUTS 677
+#define VPLAY_AT_SEATS 572
+#define VPLAY_AT_LEADER 628
+#define VPLAY_AT_N 636
+#define VPLAY_AT_HAND 642
+#define VPLAY_AT_LEFT 652
+#define VPLAY_AT_CALL 662
+#define VPLAY_AT_TYPE 673
+
+/* Expected points for root at a trick start, from the network's trick odds. */
+static double vplay_points(const ValueNet *net, const State *st, const Table *t,
+                           int trump_card, int hand_size, int root, int type) {
+    float h[VALUE_MAX_HIDDEN], g[VALUE_MAX_HIDDEN], out[16];
+    int n = t->n, trump = t->trump_suit;
+    int owner[52];
+    for (int c = 0; c < 52; c++) owner[c] = VPLAY_UNDEALT;
+    u64 m = st->played;
+    while (m) { int c = LOWEST(m); m &= m - 1; owner[c] = VPLAY_PLAYED; }
+    owner[trump_card] = VPLAY_UPCARD;
+    for (int s = 0; s < n; s++) {
+        u64 hm = st->hands[s];
+        while (hm) { int c = LOWEST(hm); hm &= hm - 1; owner[c] = (s - root + n) % n; }
+    }
+    memcpy(h, net->b0, sizeof(float) * net->h1);
+    for (int c = 0; c < 52; c++)
+        value_add_row(h, net, value_slot[trump][c] * VPLAY_OWNERS + owner[c], 1.0f);
+    int need_total = 0;
+    for (int rel = 0; rel < n; rel++) {
+        int s = (root + rel) % n, bid = st->bids[s], got = st->won[s], need = bid - got;
+        int at = VPLAY_AT_SEATS + 7 * rel;
+        if (need > 0) need_total += need;
+        value_add_row(h, net, at, 1.0f);
+        if (bid) value_add_row(h, net, at + 1, bid / 10.0f);
+        else value_add_row(h, net, at + 2, 1.0f);
+        if (got) value_add_row(h, net, at + 3, got / 10.0f);
+        if (need > 0) value_add_row(h, net, at + 4, need / 10.0f);
+        if (need < 0) value_add_row(h, net, at + 5, 1.0f);
+        if (need == 0) value_add_row(h, net, at + 6, 1.0f);
+    }
+    int left = POP(st->hands[root]);
+    int call = need_total - left;
+    call = call < -5 ? -5 : call > 5 ? 5 : call;
+    value_add_row(h, net, VPLAY_AT_LEADER + (st->leader - root + n) % n, 1.0f);
+    value_add_row(h, net, VPLAY_AT_N + n - 3, 1.0f);
+    value_add_row(h, net, VPLAY_AT_HAND + hand_size - 1, 1.0f);
+    value_add_row(h, net, VPLAY_AT_LEFT + left - 1, 1.0f);
+    value_add_row(h, net, VPLAY_AT_CALL + call + 5, 1.0f);
+    value_add_row(h, net, VPLAY_AT_TYPE + type, 1.0f);
+    for (int j = 0; j < net->h1; j++) h[j] = h[j] > 0.0f ? h[j] : 0.0f;
+    value_hidden(net, h, g, out);
+    float top = -1e30f;
+    for (int k = 0; k <= hand_size; k++) if (out[k] > top) top = out[k];
+    double total = 0.0, value = 0.0;
+    for (int k = 0; k <= hand_size; k++) total += (out[k] = expf(out[k] - top));
+    for (int k = 0; k <= hand_size; k++)
+        value += out[k] / total * points(t->params, st->bids[root], k);
+    return value;
+}
+
+/* Finishes the current trick as playout() would play it. */
+static void finish_trick(State *st, const Table *t, const double *noise, u64 *rng) {
+    while (!st->done && st->trick_size) {
+        int seat = st->to_act, card;
+        if (noise[seat] > 0.0 && next_double(rng) < noise[seat]) {
+            u64 mask = legal_mask(st->hands[seat], st->lead_suit, t->trump_suit);
+            int pick = next_below(rng, POP(mask));
+            while (pick--) mask &= mask - 1;
+            card = LOWEST(mask);
+        } else {
+            card = state_card(st, t);
+        }
+        play_card(st, t, card);
+    }
+}
+
+/* One position's value for checking against value_play (st at a trick start). */
+EXPORT double oh_vplay_points(const ValueNet *net, const Obs *obs, const Params *p,
+                              const u64 *hands, int type) {
+    init_tables();
+    value_tables();
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
+    State st = state_from_obs(obs, hands);
+    return vplay_points(net, &st, &t, obs->trump_card, obs->hand_size, obs->seat, type);
+}
+
+/* As oh_evaluate_cards outside the exact endgame: for each sampled deal and
+ * card, the trick is finished by the population, then vmeans gets the value
+ * network's expected points (or the exact points if the round is over). With
+ * playouts, the same child is then played to the end for means, as before.
+ * Returns the deals used, 0 if none fits, -1 if the network does not fit. */
+EXPORT int oh_evaluate_cards_value(const Obs *obs, const Params *p, const int *cards,
+                                   int ncards, double *means, double *vmeans,
+                                   const ValueNet *net, int playouts, u64 *rng) {
+    init_tables();
+    value_tables();
+    if (net->inputs != VPLAY_INPUTS || net->h1 > VALUE_MAX_HIDDEN || net->h2 > VALUE_MAX_HIDDEN
+            || net->outputs > 16 || obs->hand_size + 1 > net->outputs) return -1;
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
+    int count = p->worlds > MAX_WORLDS ? MAX_WORLDS : p->worlds;
+    double stop = p->time_limit > 0.0 ? now_seconds() + p->time_limit : 0.0;
+    long done = 0;
+    for (int c = 0; c < ncards; c++) means[c] = vmeans[c] = 0.0;
+    do {
+        if (!make_worlds(obs, p, &t, worlds_buffer, count, rng)) return 0;
+        for (int w = 0; w < count; w++) {
+            const World *world = &worlds_buffer[w];
+            State base = state_from_obs(obs, world->hands);
+            double noise[MAX_SEATS];
+            for (int s = 0; s < obs->n; s++) noise[s] = p->kinds[world->kinds[s]].card_noise;
+            for (int c = 0; c < ncards; c++) {
+                State child = base;
+                play_card(&child, &t, cards[c]);
+                finish_trick(&child, &t, noise, rng);
+                vmeans[c] += child.done
+                    ? points(p, child.bids[obs->seat], child.won[obs->seat])
+                    : vplay_points(net, &child, &t, obs->trump_card, obs->hand_size, obs->seat, 0);
+                if (playouts) {
+                    playout(&child, &t, noise, rng);
+                    means[c] += points(p, child.bids[obs->seat], child.won[obs->seat]);
+                }
+            }
+            done++;
+            if (stop > 0.0 && now_seconds() >= stop) goto finished;
+            if (stop == 0.0 && p->budget > 0 && done >= p->budget) goto finished;
+        }
+    } while (stop > 0.0 || done < p->budget);
+finished:
+    for (int c = 0; c < ncards; c++) {
+        means[c] /= (double)done;
+        vmeans[c] /= (double)done;
+    }
+    last_card_worlds = done;
+    last_card_playouts = done;
+    return (int)done;
 }
 
 /* Draws count worlds (at most MAX_WORLDS) as analyse_bids would, writing
@@ -1216,7 +2182,9 @@ EXPORT int oh_analyse_bids(const Obs *obs, const Params *p, int dealer_restricti
 EXPORT int oh_sample_worlds(const Obs *obs, const Params *p, int count, u64 *hands,
                             int *kinds, u64 *rng) {
     init_tables();
-    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react};
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
     if (count > MAX_WORLDS) count = MAX_WORLDS;
     if (count < 1 || !make_worlds(obs, p, &t, worlds_buffer, count, rng)) return 0;
     for (int w = 0; w < count; w++)
@@ -1234,7 +2202,9 @@ EXPORT int oh_score_bids(const Obs *obs, const Params *p, int noptions, int coun
                          const u64 *hands, const int *kinds, const int *bids,
                          double *counts, u64 *rng) {
     init_tables();
-    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react};
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
     int width = obs->hand_size + 1;
     int first = (obs->dealer + 1) % obs->n;
     for (int w = 0; w < count; w++) {
@@ -1331,7 +2301,9 @@ EXPORT int oh_plan_cards(const Obs *obs, const Params *p, const int *cards, int 
                           double exploration, int batch, double *totals, int *visits,
                           int *diagnostics, u64 *rng) {
     init_tables();
-    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react};
+    Table t = {obs->n, SUIT_OF(obs->trump_card), UINT64_C(1) << obs->trump_card, p->react,
+               p->style, p->style_all ? EVERY_SEAT : obs->seat,
+               p, obs->hand_size, obs->dealer, obs->seat};
     double stop = p->time_limit > 0.0 ? now_seconds() + p->time_limit : 0.0;
     int done = 0, deep_visits = 0;
     history_used = 1;

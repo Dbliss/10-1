@@ -52,6 +52,11 @@ later seats rebidding in reply, and fits the averaged trick odds instead of
 one finish of the true deal. ``--strong-share`` seats some non-model players
 as an untimed hybrid bot (``--strong-spec``), at the table and in finishes.
 ``--bid-hidden 384,192`` grows the hidden layers, function-preserving.
+
+Label-noise options, screened negative on 15 November 2026 (see
+BOT_EXPERIMENTS.md): ``--paired`` finishes every option at a decision with
+one shared seed; ``--play-worlds K`` averages each card label over K deals
+resampled from the seat's observation.
 """
 
 import argparse
@@ -214,12 +219,19 @@ def _generate(job):
     ``options`` may set ``label_worlds`` (above 0: bid labels are trick odds
     over that many resampled deals, see ``_resampled_odds``; 0: one finish of
     the true deal), ``strong_share`` (the chance each non-model seat is the
-    ``strong_spec`` bot rather than a population kind) and ``strong_spec``.
+    ``strong_spec`` bot rather than a population kind), ``strong_spec`` and
+    ``paired`` (true-deal labels: every option at a decision is finished
+    with the same random seed, so options differ only by the option) and
+    ``play_worlds`` (above 0: each card label is the seat's average points over
+    that many deals resampled from its observation, true kinds kept, finished
+    under the same table policies; 0: one finish of the true deal).
     """
     seed, rounds, folder, model_share, epsilon, play_rate, bid_rate, *rest = job
     options = rest[0] if rest else {}
     label_worlds = options.get('label_worlds', 0)
     strong_share = options.get('strong_share', 0.0)
+    paired = options.get('paired', False)
+    play_worlds = options.get('play_worlds', 0)
     models = load_models(folder)
     inputs = models.bid_inputs
     play_inputs = models.play_inputs
@@ -227,7 +239,7 @@ def _generate(job):
     players = list(PLAYER_WEIGHTS)
     weights = list(PLAYER_WEIGHTS.values())
     bots = _strong_bots(options['strong_spec'], 8, seed) if strong_share else []
-    belief = Belief(inference=True, field='mix') if label_worlds else None
+    belief = Belief(inference=True, field='mix') if label_worlds or play_worlds else None
     bid_x, bid_k, bid_limit, play_x, play_y = [], [], [], [], []
 
     for _ in range(rounds):
@@ -244,7 +256,7 @@ def _generate(job):
         if strong_share:
             strong = {seat: bots[seat] for seat in range(n)
                       if not model_seats[seat] and rng.random() < strong_share}
-        if not strong and not label_worlds:
+        if not strong and not label_worlds and not play_worlds:
             state.history = None
 
         earlier = {}
@@ -270,7 +282,10 @@ def _generate(job):
             bid_x.append(bid_matrix(state.hands[seat], trump, n, hand_size, seat,
                                     state.dealer, earlier[seat], labelled, inputs))
             policy = SelfPlayPolicy(models, kinds, model_seats, rng, strong=strong)
+            shared = rng.getrandbits(64) if paired else None
             for bid in labelled:
+                if paired:
+                    policy.rng = random.Random(shared)
                 trial = _clone(state)
                 trial.bids[seat] = bid
                 if seat != state.dealer and sum(trial.bids) == hand_size:
@@ -288,7 +303,27 @@ def _generate(job):
             if (len(cards) > 1 and model_seats[seat]
                     and rng.random() < play_rate):
                 play_x.append(play_matrix(state, seat, state.hands[seat], cards, play_inputs))
+                if play_worlds:
+                    obs = state.observation(seat)
+                    totals = [0.0] * len(cards)
+                    for hands_, _ in belief.worlds(obs, play_worlds, rng):
+                        base = obs.determinize(hands_)
+                        shared = rng.getrandbits(64) if paired else None
+                        for i, card in enumerate(cards):
+                            if paired:
+                                rollout.rng = random.Random(shared)
+                            trial = base.clone()
+                            trial.play_unchecked(card)
+                            _finish(trial, rollout)
+                            totals[i] += trial.points()[seat]
+                    rollout.rng = rng
+                    play_y.extend(t / play_worlds / VALUE_SCALE for t in totals)
+                    state.play_unchecked(table(state))
+                    continue
+                shared = rng.getrandbits(64) if paired else None
                 for card in cards:
+                    if paired:
+                        rollout.rng = random.Random(shared)
                     trial = _clone(state)
                     trial.play_unchecked(card)
                     _finish(trial, rollout)
@@ -499,6 +534,12 @@ def main():
                                 'worlds=8,bid_worlds=32',
                         help='the strong opponent (untimed, so its strength does not '
                              'depend on machine load)')
+    parser.add_argument('--paired', action='store_true',
+                        help='rollout labels: finish every option at a decision with the '
+                             'same random seed (common random numbers)')
+    parser.add_argument('--play-worlds', type=int, default=0,
+                        help='rollout labels: average each card label over this many deals '
+                             'resampled from what the seat knows (0: one finish of the true deal)')
     parser.add_argument('--freeze-play', action='store_true',
                         help='keep the starting play network; label and fit bids only')
     parser.add_argument('--freeze-bid', action='store_true',
@@ -514,8 +555,13 @@ def main():
     bid_loss = soft_softmax_loss if search or args.label_worlds else softmax_loss
     if search and (args.label_worlds or args.strong_share):
         parser.error('--label-worlds and --strong-share apply to rollout labels only')
+    if args.paired and (search or args.label_worlds):
+        parser.error('--paired applies to true-deal rollout labels only')
+    if search and args.play_worlds:
+        parser.error('--play-worlds applies to rollout labels only')
     options = {'label_worlds': args.label_worlds, 'strong_share': args.strong_share,
-               'strong_spec': args.strong_spec}
+               'strong_spec': args.strong_spec, 'paired': args.paired,
+               'play_worlds': args.play_worlds}
     bid_hidden = [int(h) for h in args.bid_hidden.split(',')] if args.bid_hidden else None
 
     out = Path(args.out)

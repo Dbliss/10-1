@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import type { GameState } from "../types";
+import type { GameReview, GameState } from "../types";
+import { ReviewTeaser } from "./GameReview";
 
 function Dialog({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -68,11 +69,19 @@ function winnerTitle(game: GameState) {
 
 interface GameOverDialogProps {
   game: GameState;
+  review: GameReview | null;
+  onReview: () => void;
   onPlayAgain: () => void;
   onChangeSettings: () => void;
 }
 
-export function GameOverDialog({ game, onPlayAgain, onChangeSettings }: GameOverDialogProps) {
+export function GameOverDialog({
+  game,
+  review,
+  onReview,
+  onPlayAgain,
+  onChangeSettings,
+}: GameOverDialogProps) {
   const standings = [...game.players].sort((a, b) => b.score - a.score);
 
   return (
@@ -85,7 +94,11 @@ export function GameOverDialog({ game, onPlayAgain, onChangeSettings }: GameOver
           </li>
         ))}
       </ol>
-      <button type="button" className="btn btn-primary btn-wide" onClick={onPlayAgain} autoFocus>
+      <ReviewTeaser review={review} />
+      <button type="button" className="btn btn-primary btn-wide" onClick={onReview} autoFocus>
+        Review your game
+      </button>
+      <button type="button" className="btn btn-quiet btn-wide" onClick={onPlayAgain}>
         Play again
       </button>
       <button type="button" className="btn btn-quiet btn-wide" onClick={onChangeSettings}>

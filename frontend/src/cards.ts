@@ -10,7 +10,7 @@ export const SUIT_GLYPH: Record<Suit, string> = {
 export const isRed = (suit: Suit) => suit === "Hearts" || suit === "Diamonds";
 
 export const cardImage = (card: Pick<Card, "rank" | "suit">) =>
-  `/cards/${card.rank.toLowerCase()}_of_${card.suit.toLowerCase()}.png`;
+  `${import.meta.env.BASE_URL}cards/${card.rank.toLowerCase()}_of_${card.suit.toLowerCase()}.png`;
 
 export const cardName = (card: Card) => `${card.rank} of ${card.suit}`;
 

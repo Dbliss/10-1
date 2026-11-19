@@ -1,23 +1,11 @@
-import type { Advice, GameState } from "./types";
+import type { Advice, GameReview, GameState } from "./types";
+import { send } from "./transport";
 
 type Game = GameState | null;
 
 async function request<T = Game>(path: string, method = "GET", body?: unknown): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/game${path}`, {
-      method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    throw new Error("Can't reach the game server. Is website.py running?");
-  }
-
-  const data = await response.json().catch(() => {
-    throw new Error("The game server sent an unreadable response. Is website.py running?");
-  });
-  if (!response.ok) {
+  const { status, data } = await send(`/api/game${path}`, method, body);
+  if (status >= 400) {
     throw new Error(data?.error ?? "The game server rejected that action.");
   }
   return data;
@@ -32,4 +20,5 @@ export const api = {
   play: (card: string) => request("/play", "POST", { card }),
   advance: () => request("/advance", "POST"),
   advice: () => request<Advice>("/advice"),
+  review: () => request<GameReview>("/review"),
 };

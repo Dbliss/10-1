@@ -25,6 +25,11 @@ VERSIONS = (
     # v1's hybrid search with networks retrained under bowers, then improved
     # by self-play (ohhell/learn/selfplay.py). Passed main and confirmation.
     Version(2, 'Self-play bowers nets', 'hybrid:field=previous,time_ms=2'),
+    # v2 without reading opponents' bids and plays when sampling deals: at
+    # 2 ms the reading cost ~83% of each card turn, and six times as many
+    # unweighted deals scored better. Passed main (+5.30 +/- 4.48) and
+    # confirmation (+5.18 +/- 3.03) on 16 November 2026. Measured at 2 ms only.
+    Version(3, 'No reading', 'hybrid:field=previous,inference=0,time_ms=2'),
 )
 DEFAULT_SPEC = VERSIONS[-1].spec
 

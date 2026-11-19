@@ -9,3 +9,5 @@ frontend/dist/
 runs/
 ohhell/native/*.dll
 ohhell/native/*.so
+
+frontend/public/py/

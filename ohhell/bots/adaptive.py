@@ -82,7 +82,7 @@ class AdaptiveBot(HybridBot):
         self.last_search = None
         cards = obs.legal_actions()
         remaining = obs.hand.bit_count() * obs.n - obs.trick_size
-        if len(cards) == 1 or remaining <= self.endgame_cards:
+        if len(cards) == 1 or remaining <= self.endgame_limit(obs.n):
             return super().play(obs)
 
         predicted = dict(zip(cards, self.models.card_values(

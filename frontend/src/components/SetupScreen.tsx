@@ -43,7 +43,7 @@ export function SetupScreen({ onStart }: { onStart: (players: number, handSize: 
     <main className="setup">
       <div className="setup-fan" aria-hidden="true">
         {["ace_of_spades", "king_of_hearts", "queen_of_clubs"].map((card, i) => (
-          <img key={card} src={`/cards/${card}.png`} alt="" style={{ "--i": i - 1 } as React.CSSProperties} />
+          <img key={card} src={`${import.meta.env.BASE_URL}cards/${card}.png`} alt="" style={{ "--i": i - 1 } as React.CSSProperties} />
         ))}
       </div>
 

@@ -72,12 +72,77 @@ def solve(state, root, memo):
     return best
 
 
-def solve_root(state, cards, seat):
-    """Value, for ``seat``, of each candidate card under exact search."""
+def distinct_moves_counted(state):
+    """``distinct_moves`` with how many legal cards each kept card stands for."""
+    kept = distinct_moves(state)
+    legal = cards_in(legal_card_mask(state.hands[state.to_act], state.lead_suit,
+                                     state.trump_suit))
+    order = {card: i for i, card in enumerate(kept)}
+    trump = state.trump_suit
+    power = POWER[trump]
+    suit_of = EFFECTIVE_SUIT[trump]
+    sizes = [0] * len(kept)
+    for card in legal:
+        # A merged card goes to the weakest kept card of its suit at or above it.
+        owner = min((k for k in kept if suit_of[k] == suit_of[card] and power[k] >= power[card]),
+                    key=lambda k: power[k])
+        sizes[order[owner]] += 1
+    return kept, sizes
+
+
+def solve_noisy(state, root, noise, memo):
+    """``solve`` for seats that play a random legal card with chance ``noise[seat]``.
+
+    The mover's best line (ties against ``root``) has weight ``1 - noise`` and
+    the mean over every legal card has weight ``noise``. Matches the C core.
+    """
+    if state.phase != PLAYING:
+        return tuple(float(x) for x in state.points())
+
+    key = None
+    if state.trick_size == 0:
+        key = (tuple(state.hands), state.leader, tuple(state.tricks_won))
+        known = memo.get(key)
+        if known is not None:
+            return known
+
+    seat = state.to_act
+    eps = noise[seat]
+    best = None
+    mean = [0.0] * len(state.hands)
+    total = 0
+    for card, size in zip(*distinct_moves_counted(state)):
+        child = state.clone()
+        child.play_unchecked(card)
+        value = solve_noisy(child, root, noise, memo)
+        if (best is None or value[seat] > best[seat]
+                or (value[seat] == best[seat] and value[root] < best[root])):
+            best = value
+        if eps > 0:
+            mean = [m + size * v for m, v in zip(mean, value)]
+            total += size
+    if eps > 0:
+        best = tuple((1 - eps) * b + eps * m / total for b, m in zip(best, mean))
+
+    if key is not None:
+        memo[key] = best
+    return best
+
+
+def solve_root(state, cards, seat, noise=None):
+    """Value, for ``seat``, of each candidate card under exact search.
+
+    With ``noise`` (chance per seat of a random card), uses ``solve_noisy``;
+    ``seat`` itself is always taken to play its best card.
+    """
     memo = {}
     values = {}
+    if noise is not None:
+        noise = list(noise)
+        noise[seat] = 0.0
     for card in cards:
         child = state.clone()
         child.play_unchecked(card)
-        values[card] = solve(child, seat, memo)[seat]
+        values[card] = (solve(child, seat, memo) if noise is None
+                        else solve_noisy(child, seat, noise, memo))[seat]
     return values

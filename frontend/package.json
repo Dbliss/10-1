@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:pages": "tsc --noEmit && vite build --mode pages",
+    "preview:pages": "vite preview --mode pages"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.5",

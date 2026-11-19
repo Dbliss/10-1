@@ -1,5 +1,10 @@
 # Independent bidding and card-play benchmarks
 
+For current bower rules use `runs/cases/bowers-search-20261113.jsonl` and
+the reference bench in [BOT_SEARCH_WORK.md](BOT_SEARCH_WORK.md). The older
+`predetermined-v1` bank below predates bowers and must not be reused as
+current-rule training or evaluation data.
+
 The bot already has separate bid and play networks. `ohhell.learn.cases`
 provides repeatable decision tests for each, without changing the default bot
 or either checkpoint. Run commands from the repository root.

@@ -3,8 +3,8 @@
 Give the cards you hold, the number of players, the trump (the turned-up card,
 or just its suit) and the bids already made before you. The game's advisor
 then estimates each bid's chance of being made exactly. The advisor is the
-game's default bot (the current best version) with more sampled deals per
-decision. The calibrated quick estimate (``ohhell/estimate.py``) is shown only
+game's default bot (the current best version) thinking for
+``Game.ADVISOR_TIME_MS`` instead of a tournament turn's 2 ms. The calibrated quick estimate (``ohhell/estimate.py``) is shown only
 as a note; it does not drive the recommendation.
 """
 
@@ -92,6 +92,7 @@ def recommend(players, hand, trump, bids_before, blind=False, rng=random):
                    for b, v in values.items()]
     else:
         advisor = make_bot(ADVISOR_SPEC, rng.getrandbits(32))
+        advisor.start_clock()  # think for the advisor's full time allowance
         analysis = advisor.analyse_bids(obs)
         options = [{'bid': b, 'expected_points': round(analysis.values[b], 1),
                     'make_chance': round(analysis.distributions[b][b], 3)}

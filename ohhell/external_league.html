@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Oh Hell · Public bot league</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#101b21;color:#e5eceb}body{max-width:1200px;margin:0 auto;padding:32px 24px}h1{font-size:32px;margin-bottom:8px}h2{font-size:21px;margin-top:34px}.muted{color:#acbdc4;font-size:14px;line-height:1.6}.stats{display:flex;gap:30px;flex-wrap:wrap;margin:28px 0}.stat{background:#192c32;padding:18px 24px;border-radius:10px;min-width:130px}.stat b{display:block;font-size:26px}.stat span{font-size:13px;color:#b9cccb}progress{width:100%;accent-color:#7ad6b3}table{width:100%;border-collapse:collapse;background:#14262b;border-radius:10px;overflow:hidden}th,td{text-align:left;padding:14px 12px;border-bottom:1px solid #294048;font-variant-numeric:tabular-nums}th{color:#acbdc4;font-size:12px;text-transform:uppercase;letter-spacing:.04em}.scroll{overflow:auto}a{color:#8be0bf}.badge{color:#9ee4c3}.error{color:#ffb6a4;white-space:pre-wrap}details{background:#172a30;border-radius:8px;margin:10px 0;padding:14px}summary{cursor:pointer}#pairs td{font-size:14px}.footer{margin-top:32px;font-size:13px;color:#a1b6bd}
+</style></head><body>
+<div class="badge">REFERENCE LEAGUE · ADAPTED PUBLIC PLAYERS</div>
+<h1>Oh Hell: everyone at the table</h1><div id="label" class="muted">Waiting for the league…</div>
+<div class="stats"><div class="stat"><b id="sets">—</b><span>deal sets completed</span></div><div class="stat"><b id="games">—</b><span>complete games</span></div><div class="stat"><b id="elapsed">—</b><span>elapsed</span></div><div class="stat"><b id="status">Running</b><span>league status</span></div></div>
+<progress id="progress" value="0" max="1"></progress><p id="rules" class="muted"></p><p id="error" class="error" hidden></p>
+<h2>Standings</h2><div class="scroll"><table><thead><tr><th>Player</th><th>Points / game ±95%</th><th>Win share ±95%</th><th>ms / choice</th><th>Longest ms</th></tr></thead><tbody id="standings"></tbody></table></div>
+<p class="muted">Every deal set is replayed with every player in every seat. Intervals use independent deal sets, accounting for related seat rotations. A high mean is a descriptive ranking; this league does not promote the default bot.</p>
+<h2>Paired score differences</h2><div class="scroll"><table id="pairs"><thead><tr><th>Player A</th><th>Player B</th><th>A − B points/game ±95%</th></tr></thead><tbody id="pairRows"></tbody></table></div>
+<h2>Origins and rule adjustments</h2><div id="origins"></div><h2>Not entered</h2><ul id="excluded" class="muted"></ul>
+<p id="limitations" class="footer"></p><p class="footer">No hidden opponent hands are supplied to adapters. Illegal actions or native failures stop the run; no replacement bot is substituted.</p>
+<script>
+const $=id=>document.getElementById(id);const fmt=(x,d=2)=>x==null?'—':Number(x).toFixed(d);
+const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const interval=(x,m,p=false)=>x==null?'—':`${fmt(p?100*x:x)}${p?'%':''} ± ${m==null?'—':fmt(p?100*m:m)}${p?'%':''}`;
+function render(s){$('label').textContent=s.label;$('sets').textContent=`${s.sets} / ${s.target_sets}`;$('games').textContent=s.games;$('elapsed').textContent=`${Math.floor(s.elapsed/60)}m ${Math.floor(s.elapsed%60)}s`;$('status').textContent=s.error?'Failed':s.finished?'Complete':'Running';$('progress').value=s.sets;$('progress').max=s.target_sets;
+$('rules').textContent=`${s.players} players · opening ${s.rules.max_hand} · down to 1, blind 0, back up · bowers · dealer restriction · +10 per made trick, +10 made zero, −10 per trick off. Search allowance ${s.time_ms} ms is soft; actual costs are reported.`;
+$('error').hidden=!s.error;$('error').textContent=s.error||'';const names=Object.fromEntries(s.standings.map(p=>[p.id,p.name]));
+$('standings').innerHTML=[...s.standings].sort((a,b)=>(b.mean??-Infinity)-(a.mean??-Infinity)).map(p=>`<tr><td>${escape(p.name)}</td><td>${interval(p.mean,p.margin)}</td><td>${interval(p.win_share,p.win_margin,true)}</td><td>${fmt(p.ms_per_choice)}</td><td>${fmt(p.longest_ms)}</td></tr>`).join('');
+$('pairRows').innerHTML=s.pairs.map(p=>`<tr><td>${escape(names[p.a])}</td><td>${escape(names[p.b])}</td><td>${interval(p.edge,p.margin)}</td></tr>`).join('');
+if(!$('origins').children.length){$('origins').innerHTML=s.standings.map(p=>`<details><summary>${escape(p.name)}</summary><p class="muted">${p.origin.startsWith('https://github.com/')?`<a href="${escape(p.origin)}" target="_blank" rel="noreferrer">Upstream repository</a>`:escape(p.origin)}</p><p class="muted">${escape(p.adaptation)}</p></details>`).join('');$('excluded').innerHTML=s.excluded.map(p=>`<li><b>${escape(p.name)}</b>: ${escape(p.reason)}</li>`).join('');}
+$('limitations').textContent=s.limitations;}
+async function poll(){try{const r=await fetch('/stats');if(!r.ok)throw Error(r.status);render(await r.json());}catch(e){$('status').textContent='Disconnected';}setTimeout(poll,1500);}poll();
+</script></body></html>

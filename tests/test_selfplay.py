@@ -101,3 +101,36 @@ def test_widened_play_network_predicts_what_it_did_before():
     narrow = play(play_matrix(obs, obs.seat, obs.hand, cards))
     widened = wide(play_matrix(obs, obs.seat, obs.hand, cards, PLAY_BOWER_INPUTS))
     assert np.allclose(narrow, widened, atol=1e-5)
+
+
+def test_paired_and_world_averaged_play_labels_have_sane_shapes():
+    base = dict(strong_spec='unused')
+    for extra in ({'paired': True}, {'play_worlds': 4}, {'play_worlds': 4, 'paired': True}):
+        bid_x, bid_k, bid_limit, play_x, play_y = _generate(
+            (9, 20, str(MODEL_DIR), 1.0, 0.05, 0.15, 0.0, dict(base, **extra)))
+        assert len(play_x) == len(play_y) > 0
+        assert np.all(np.abs(play_y * VALUE_SCALE) <= 110)
+        assert len(bid_x) == 0  # bid_rate 0: no bid labels
+
+
+def test_paired_labels_give_equal_options_equal_values():
+    """With a shared seed, two identical options must get identical labels."""
+    import random as _random
+    from ohhell.learn.selfplay import _clone, _finish
+    from ohhell.opponents import CASUAL
+    models = load_models(None)
+    rng = _random.Random(3)
+    hands, trump = deal_round(rng, 4, 6)
+    state = RoundState(Rules(4, 10), hands, trump, 0)
+    while state.phase == BIDDING:
+        state.apply(state.legal_actions()[0])
+    policy = SelfPlayPolicy(models, [CASUAL] * 4, [True, False, False, False], rng)
+    card = state.legal_actions()[0]
+    values = []
+    for _ in range(2):
+        policy.rng = _random.Random(77)
+        trial = _clone(state)
+        trial.play_unchecked(card)
+        _finish(trial, policy)
+        values.append(trial.points())
+    assert values[0] == values[1]

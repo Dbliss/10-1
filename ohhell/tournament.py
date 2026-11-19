@@ -164,6 +164,12 @@ class Timed:
             self.clock[2] = max(self.clock[2], spent)
         return action
 
+    def observe_round(self, obs):
+        started = time.perf_counter()
+        self.bot.observe_round(obs)
+        # Charge persistent reading to the same game clock; it isn't free work.
+        self.clock[0] += time.perf_counter() - started
+
 
 def play_set(job):
     """Play one preset game once per seat.
@@ -347,6 +353,10 @@ class Scoreboard:
             self.played += len(games)
             means = set_means(games)
             self.repeat.add(means[members.index(CANDIDATE)] - means[members.index(BASELINE)])
+            for at, slot in enumerate(members):
+                self.clocks[slot][0] += clocks[at][0]
+                self.clocks[slot][1] += clocks[at][1]
+                self.clocks[slot][2] = max(self.clocks[slot][2], clocks[at][2])
 
     def mark_progress(self):
         with self.lock:
@@ -361,6 +371,12 @@ class Scoreboard:
                 self.verdict = 'reference'
             else:
                 self.verdict = self.decision or 'inconclusive'
+            ratio = getattr(self.args, 'mean_time_ratio', None)
+            if ratio is not None and self.verdict == 'better':
+                candidate, baseline = self.clocks[CANDIDATE], self.clocks[BASELINE]
+                if (not candidate[1] or not baseline[1]
+                        or candidate[0] / candidate[1] > ratio * baseline[0] / baseline[1]):
+                    self.verdict = 'over time'
             self.finished_at = time.monotonic()
 
     def _margin(self, slot):
@@ -405,6 +421,7 @@ class Scoreboard:
                     'margin': self.repeat.interval,
                 },
                 'smallest_gain': self.args.smallest_gain,
+                'mean_time_ratio': getattr(self.args, 'mean_time_ratio', None),
                 'time_ms': self.args.time_ms,
                 'candidate_time_ms': getattr(self.args, 'candidate_time_ms', None),
                 'reference': self.args.reference,
@@ -558,10 +575,29 @@ def check_run_config(path, args, specs):
             coefficients = COEFFICIENT_FILES[int(options['estimate'])]
             weights[str(coefficients.resolve())] = hashlib.sha256(
                 coefficients.read_bytes()).hexdigest()
+        if options.get('bid_table'):
+            from .bots.learned import bid_table_path
+            table = bid_table_path(options['bid_table'])
+            weights[str(table.resolve())] = hashlib.sha256(table.read_bytes()).hexdigest()
+        for key in ('value_bids', 'value_play'):
+            if not options.get(key):
+                continue
+            from .learn.models import REPO_ROOT
+            value = Path(options[key])
+            value = value / 'value.npz' if value.suffix != '.npz' else value
+            if not value.is_absolute() and not value.exists():
+                value = REPO_ROOT / value
+            weights[str(value.resolve())] = hashlib.sha256(value.read_bytes()).hexdigest()
         if name == 'ranges':
             from .bots.ranges import TABLE_FILE
             weights[str(TABLE_FILE.resolve())] = hashlib.sha256(
                 TABLE_FILE.read_bytes()).hexdigest()
+        if (options.get('policy', 'heuristic') != 'heuristic'
+                or options.get('policy_inference', '0') != '0'
+                or options.get('evaluator') == 'compact'):
+            from .learn.rollout import MODEL_DIR as ROLLOUT_DIR
+            model = Path(options.get('rollout_models', str(ROLLOUT_DIR))) / 'play.npz'
+            weights[str(model.resolve())] = hashlib.sha256(model.read_bytes()).hexdigest()
         if name not in ('net', 'hybrid', 'adaptive', 'evidence', 'planning', 'nnue', 'seatbids',
                         'ranges'):
             continue
@@ -577,6 +613,14 @@ def check_run_config(path, args, specs):
         'time_ms': args.time_ms, 'player_split': list(PLAYER_SPLIT.items()),
         'max_hand': MAX_HAND, 'weights': weights,
     }
+    # Source edits change both timed throughput and decisions. Never silently
+    # resume sets from a different implementation, even with identical models.
+    sources = sorted(HERE.rglob('*.py')) + sorted((HERE / 'native').glob('*.c'))
+    config['source_sha256'] = hashlib.sha256(json.dumps({
+        str(p.relative_to(HERE)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sources}, sort_keys=True).encode()).hexdigest()
+    if getattr(args, 'mean_time_ratio', None) is not None:
+        config['mean_time_ratio'] = args.mean_time_ratio
     if getattr(args, 'reference', False):
         config['reference'] = True  # absent otherwise, so earlier runs still resume
     # Normalize tuples so the saved JSON compares identically on resume.
@@ -630,6 +674,14 @@ def run(args):
     lobby = build_lobby(args.candidate, args.baseline, args.time_ms, args.label, args.reference,
                         args.candidate_time_ms)
     specs = [spec for _, _, spec in lobby]
+    for spec in specs:
+        bot = make_bot(spec)
+        if hasattr(bot, 'simulator') and bot.simulator is None:
+            raise SystemExit(f'Timed tournament requires native simulation: {spec}')
+    if getattr(args, 'preflight_only', False):
+        print(f'Native core: {native.LIBRARY}\nCandidate: {specs[0]}\nBaseline: {specs[1]}')
+        print('All lobby bots loaded. No games run.')
+        return
     check_run_config(GATES / f'{slug}.meta', args, specs)
     board = Scoreboard(args, lobby, load_history())
     saved = load_previous(results) if args.resume else {}
@@ -691,6 +743,11 @@ def main():
     parser.add_argument('--time-ms', type=float, default=TIME_MS, help='time per turn for every bot')
     parser.add_argument('--candidate-time-ms', type=float, default=None,
                         help='time per turn for the candidate only (default: --time-ms)')
+    parser.add_argument('--mean-time-ratio', type=float, default=None,
+                        help='withhold a better verdict if candidate mean time exceeds this '
+                             'multiple of baseline time, including confirmation and reading')
+    parser.add_argument('--preflight-only', action='store_true',
+                        help='load every bot and verify native availability without playing')
     parser.add_argument('--smallest-gain', type=float, default=1.0,
                         help='points per game below which a change is not worth having')
     parser.add_argument('--max-sets', type=int, default=1300,
@@ -705,6 +762,9 @@ def main():
                         help='run the candidate without a time limit; reports the edge only, '
                              'with no verdict and no promotion')
     args = parser.parse_args()
+    if (args.time_ms <= 0 or (args.candidate_time_ms is not None and args.candidate_time_ms <= 0)
+            or (args.mean_time_ratio is not None and args.mean_time_ratio <= 0)):
+        parser.error('time allowances and mean-time-ratio must be positive')
     args.label = args.label or re.sub(r'[^\w.-]+', '_', args.candidate)[:60]
     if args.seed is None:
         args.seed = zlib.crc32(args.label.encode()) & 0x3FFFFFFF

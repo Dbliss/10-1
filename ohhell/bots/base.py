@@ -29,6 +29,9 @@ class Bot:
     def play(self, obs):
         raise NotImplementedError
 
+    def observe_round(self, obs):
+        """Optional completed-round notification containing only public cards."""
+
 
 class RandomBot(Bot):
     """Picks uniformly among legal actions."""
