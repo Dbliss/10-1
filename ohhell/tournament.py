@@ -570,15 +570,21 @@ def check_run_config(path, args, specs):
     for spec in specs:
         name, _, settings = spec.partition(':')
         options = dict(pair.split('=', 1) for pair in settings.split(',') if '=' in pair)
-        if options.get('estimate') in ('2', '3'):
-            from .estimate import COEFFICIENT_FILES
-            coefficients = COEFFICIENT_FILES[int(options['estimate'])]
-            weights[str(coefficients.resolve())] = hashlib.sha256(
-                coefficients.read_bytes()).hexdigest()
+        for setting in ('estimate', 'bid_estimate'):
+            if options.get(setting) in ('2', '3'):
+                from .estimate import COEFFICIENT_FILES
+                coefficients = COEFFICIENT_FILES[int(options[setting])]
+                weights[str(coefficients.resolve())] = hashlib.sha256(
+                    coefficients.read_bytes()).hexdigest()
         if options.get('bid_table'):
             from .bots.learned import bid_table_path
             table = bid_table_path(options['bid_table'])
             weights[str(table.resolve())] = hashlib.sha256(table.read_bytes()).hexdigest()
+        for setting in ('bid_calibration_file', 'bid_rank_file'):
+            if options.get(setting):
+                from .bid_calibration import coefficient_path
+                coefficients = coefficient_path(options[setting])
+                weights[str(coefficients)] = hashlib.sha256(coefficients.read_bytes()).hexdigest()
         for key in ('value_bids', 'value_play'):
             if not options.get(key):
                 continue

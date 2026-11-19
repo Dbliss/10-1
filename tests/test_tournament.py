@@ -274,11 +274,12 @@ def test_tournament_fingerprints_the_estimate_file(tmp_path):
     from ohhell.estimate import COEFFICIENT_FILES
     from ohhell.tournament import check_run_config
     args = SimpleNamespace(seed=1, max_sets=130, smallest_gain=1, time_ms=10, resume=False)
-    for version in (2, 3):
-        manifest = tmp_path / f'run{version}.meta'
-        check_run_config(manifest, args, [f'simulation:estimate={version}'])
-        saved = json.loads(manifest.read_text())['weights']
-        assert str(COEFFICIENT_FILES[version].resolve()) in saved
+    for setting in ('estimate', 'bid_estimate'):
+        for version in (2, 3):
+            manifest = tmp_path / f'run_{setting}_{version}.meta'
+            check_run_config(manifest, args, [f'simulation:{setting}={version}'])
+            saved = json.loads(manifest.read_text())['weights']
+            assert str(COEFFICIENT_FILES[version].resolve()) in saved
 
 
 def test_candidate_alone_can_get_more_time():

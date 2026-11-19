@@ -1,0 +1,11 @@
+{
+  "log_odds_weights": [
+    0.17932397446361892,
+    0.3877049354399858,
+    -0.44491920027473747,
+    0.07207455450140181
+  ],
+  "training_positions": 298,
+  "training_source": "runs/bid_play/audit_947341000.jsonl",
+  "training_sha256": "7e0023f6273062e63051bebb7dea67c4892f54ab8ec27eb31e948abc688909d5"
+}

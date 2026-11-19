@@ -2,6 +2,58 @@
 
 Updated 19 November 2026. This is the durable record for future agents.
 
+## Prepared: own-bid-only fitted formula (19 November 2026)
+
+User requested implementation and unattended duels while away. New hypothesis:
+a fitted estimator can improve our bid shortlist without changing opponent
+modelling. Earlier estimate=2/3 experiments also changed imagined bidders and
+inference. This is a distinct isolated experiment, not an unchanged rerun.
+
+Candidate adds `bid_estimate=3` to the game bot: existing fitted v3 coefficients
+only for our own shortlist. Range floor(E)-1 .. ceil(E)+2, capped to legal
+bids and floored at certain top-trump tricks, as in the existing calibrated
+formula. No new training, arbitrary bonuses, or boundary expansion combined.
+Opponent bidding, inference, simulation policies, network inputs, bid blend,
+card play and defaults unchanged. `bid_estimate=0` preserves existing specs.
+
+Reported hand JH/7H/4H/JS/7S/KC/QC/2C/KD/10D, hearts 2 turned,
+4 players, dealer seat 2, seat 3 bid 2, us seat 0: old E=1.932987,
+shortlist 0..4; fitted v3 E=2.869128, shortlist 1..5. This does not prove
+5 is better, and still leaves a finite shortlist.
+
+Candidate `hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25,bid_estimate=3`
+against the same spec without `bid_estimate=3`. Plan: 50 ms screen,
+seed 2026111903; only if main and unseen-deal confirmation pass, validate
+at 250 ms, seed 2026111904. Each uses 18 workers, interleaved calibrated
+fixed budgets, max 60,000 main rounds, 10 O'Brien-Fleming looks, smallest
+gain 2 points/game. Weighted 3..8-player down/blind/up rules, bowers,
+field previous hybrid x3 / skilled / casual. Duel manifests include source,
+model and coefficient SHA-256 fingerprints (added independent coefficient
+fingerprinting). Runner `scripts/run_bid_estimate_experiment.py` appends every
+completed result below, serves read-only progress at http://localhost:8781/,
+and never promotes defaults. 50/250 ms is not evidence at 750 ms.
+
+Verification so far: 69 relevant tests passed; 4-round fixed-budget duel
+smoke passed. Includes reported-hand regression, default compatibility,
+legal options, unchanged native/Python simulation for equal options,
+independent opponent settings, HybridBot plumbing and fingerprints.
+Full suite in .venv: 710 passed, 4 failed in 64.32 s. All four are the
+already-documented stale v2-default assertions (nnue, planning x2,
+search_components), unrelated to this change. Relevant tests: 69 passed.
+
+
+
+
+Reported-hand diagnostic (not a strength gate): all 11 legal bids evaluated
+with the unchanged game bot's simulation/network blend, 10,000 sampled deals
+per seed, seeds 19031/19032/19033, same public position reconstructed from
+the screenshot. Bid 4 remained best in all three: make chance 45.8-46.6%,
+expected points +11.64 to +12.09. Bid 5: 31.8-33.0%, +5.94 to +6.82.
+Higher bids were worse. Thus the screenshot was not a demonstrated missed
+best bid. Diagnostic saved as
+`runs/duels/own_bid_estimate_reported_hand.json`. The diagnostic does not
+know the actual hidden hands (it uses only the observation).
+
 ## Stopped, no verdict: `endgame_noise=1,endgame_table=1` at 250 ms (19 November 2026)
 
 Two changes tested together (noise-aware exact solve in deals with noisy
@@ -2726,3 +2778,313 @@ under the new full-game rules in the results inspected for this log.
   resume manifests check rules/settings and model hashes, not all source code.
 - The user runs long tournaments from supplied commands and opens dashboard
   links themselves. Do not automate their PC or browser.
+
+
+## Completed: own-bid-only fitted estimate, 50 ms (19 November 2026)
+
+Single strategy change: `bid_estimate=3` replaces only our own bid shortlist estimator with the existing fitted v3 formula. Opponent bidding, inference, network inputs, blend and card play are unchanged. This isolates the estimator from the earlier estimate=2/3 experiments.
+
+Candidate `hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25,bid_estimate=3` against `hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25`. Seed 2026111903, allowance 50 ms, 18 workers, calibrated fixed budgets (interleaved timing), max 60,000 main rounds, 10 O’Brien–Fleming looks, smallest gain 2 points/game. Bowers, down/blind/up round weights, 3–8 players with tournament weights; field previous hybrid x3 / skilled / casual.
+
+**Verdict: no gain**. Main 18,000 rounds: -0.293 points/game, gate margin +/- 4.254; diverged 18.94%. Mean decision ms candidate / baseline: 287.81 / 221.97.
+No unseen-deal confirmation: main gate did not pass.
+Source SHA-256 `74372cf6c4a53c7c2947ca434bbe3acce6de23bcad3df2f99ea3f5228e516bce`. Model/coefficient SHA-256 fingerprints: `{"C:\\Users\\dbliss-henaghan\\Documents\\Github\\10-1\\ohhell\\models\\bid.npz": "a84e9315a14bdbeabd3964df5fa315ac64780ef09553e404b90cf33ae022e29d", "C:\\Users\\dbliss-henaghan\\Documents\\Github\\10-1\\ohhell\\models\\play.npz": "8cb5a064fe30ad03904912d0a88941da248f4507e341bdbfefdb6f187fe9d474", "C:\\Users\\dbliss-henaghan\\Documents\\Github\\10-1\\ohhell\\models\\trick_estimate3.json": "20971772043ad011255786c70128c195eeb193423d64c1b525ce85c5891aee7e"}`.
+Calibration: `{"load": {"bid": 0.6738293963867046, "card": 0.6319058184724786, "endgame": 0.7318453209859351}, "rates": {"bid": 178.82, "card": 103.66, "endgame": 133.6}, "reference": "hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25", "rounds": 300, "specs": {"hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25": {"budgets": {"bid": 8941, "card": 5183, "endgame": 6680}, "measured": {"bid": [6024.708633093525, 278], "card": [3275.167857142857, 560], "endgame": [4888.726744186047, 344]}}, "hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25,bid_estimate=3": {"budgets": {"bid": 9066, "card": 5144, "endgame": 6744}, "measured": {"bid": [6108.6474820143885, 278], "card": [3250.3772241992883, 562], "endgame": [4935.457478005865, 341]}}}, "time_ms": 50.0}`.
+Results `runs/duels/50ms_own_bid_estimate_v3.{meta,jsonl,json,log}`. Defaults unchanged. A 50 ms result alone does not establish strength at the game’s 750 ms allowance.
+
+Stopping detail for this run: the no-gain verdict came from the default
+futility rule, not the wider sequential gate interval. At 18,000 rounds,
+plain 95% upper bound = -0.29278 + 1.96 * 149.79137 / sqrt(18000)
+= +1.896 points/game, below the predeclared 2-point smallest gain.
+The sequential gate interval was about [-4.55, +3.96]. No proof of
+zero effect or harm; insufficient grounds for promotion. The 250 ms
+stage was correctly skipped. Wall-clock means were affected by machine
+load changes; allowances used calibrated fixed deal budgets, not live
+50 ms deadlines.
+
+Post-run action audit (all 18,000 saved pairs): 14,591 (81.06%) had identical actions, 102 (0.57%) first differed in bidding, and 3,307 (18.37%) first differed in card play after identical bids. Weighted contributions to the overall edge were +0.378 points/game from bid-first pairs and -0.671 from play-first pairs. This is a descriptive split, not a causal estimate of either policy. The calibration gave different card and endgame budgets despite the same card policy. A follow-up should match those budgets exactly and measure missed-bid frequency and point cost against an all-legal reference before testing a new shortlist.
+
+
+## Measured: current bid shortlist against every legal bid (19 November 2026)
+
+Baseline: current game bot `hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25`.
+6,000 fresh bid positions starting at seed 947321000, sampled with the duel's
+3-8-player and down/blind/up round weights, bowers and dealer restriction.
+Earlier bids came from the standard duel field (previous hybrid x3, skilled,
+casual). At each pruned position, ranked all legal bids together using the
+current simulation/network blend and 8,192 sampled deals, with no wall-clock
+limit. Each nominated missed bid and best shortlisted bid was scored again
+on 8,192 independent draws. Blind is included in the denominator and uses
+its existing exact bid calculation. Worked examples and scores saved in
+`runs/bid_shortlist/audit_947321000.{jsonl,json,meta}`. Source SHA-256
+a7869cf4dde4dbac..., bid.npz a84e9315..., play.npz 8cb5a064... (full
+hashes in manifest). Smoke run: 24 positions, seed 947320000, 256 deals,
+same rules and field, output `runs/bid_shortlist/audit_smoke.*`.
+
+3,610 positions had a pruned shortlist. Seven of 6,000 (0.12%) nominated
+an excluded bid, all above the range, and all seven scored higher on the
+second draws. Six were 10-card rounds and one was an 8-card round. Five
+winners were one above the range and two were two above. The largest
+verified gap on a single hand was +17.05 points. Summing the held-out
+gaps with the duel's game-length weights gives +0.136 points per game
+(approximate 95% margin +/-0.144; rare-event estimate). This is the value
+of the detected misses under the bot's own simulator and bid network,
+with other positions assigned zero. It does not estimate realised match
+points or the cost of fewer draws per bid with a fixed clock. No duel
+started: the measured opportunity was well below the usual 2-point target.
+
+
+## Measured: current bid search wall-clock scaling (19 November 2026)
+
+Single-process diagnostic, current game bot (the duel's REFERENCE_SPEC),
+24 sampled round seeds from 947330000, 23 ordinary bids measured after
+excluding blind. Standard weighted down/blind/up, bowers, dealer rule and
+duel field bidders before the tested seat. Same observation and bot seed
+across 2/10/50/250/750 ms real deadlines, order rotated by seed. Reference
+is the same bot and shortlist with 65,536 draws on an independent seed.
+Median observed ms: 2.25 / 10.42 / 50.33 / 250.39 / 750.36. Median deals:
+446 / 2,241 / 10,152 / 57,171 / 171,347. Agreement with reference:
+21/23 at 2 ms, 23/23 at every longer deadline. Mean reference expected
+loss at 2 ms was 0.080 points per bid position. Short sample, no realized
+match scores or evidence of optimal play. No configuration change.
+Bid/play hashes a84e9315... / 8cb5a064..., source a7869cf4dde4dbac...
+(same as preceding audit). Rows: runs/bid_shortlist/time_probe_947330000.json.
+
+
+## Measured: adaptive stopping for bid search (19 November 2026)
+
+Opt-in candidate adds `bid_stop_z=4` to the current game hybrid
+(`hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25`).
+The normal network contribution is a fixed offset. The leading bid must
+clear every rival by 0.25 points plus four estimated standard errors of
+the paired score difference. The final candidate estimates uncertainty
+across full resampling blocks, with at least eight blocks and 512 draws
+by default. The bid may run to the configured cap on close calls. This
+is a stopping heuristic with repeated looks, not a confidence guarantee.
+Default is off. No time transfer to card play.
+
+Paired position benchmarks: 400 drawn rounds at 50 ms and a separate 96
+at 750 ms in each probe, eight workers. Same observation and seed within
+a pair, alternating order, observed wall-clock time. Standard weighted
+3-8-player down/blind/up rules, bowers and dealer restriction. Earlier
+bids from the standard duel field. Blind positions skipped. Reference:
+current game bot on an independent stream of 65,536 draws, same shortlist
+and network blend. Full model hashes in both manifests (bid a84e9315...,
+play 8cb5a064...). Benchmark script runs/bid_shortlist/bid_stop_probe.py.
+
+- Initial per-draw variance, minimum 256, first seed 947334000, source
+  3b4798b0..., DLL core_9f6dfaedfde687f0.dll. At 50 ms, mean elapsed
+  50.64 -> 9.66 ms, two different bids in 375; both worse by the reference
+  (0.66 and 7.99 points). At 750 ms, 751.40 -> 52.38 ms, 0/89 different.
+  Superseded by the block variance design. Files
+  runs/bid_stop/probe_947334000.{meta,jsonl,json}.
+- Final block variance, first seed 947335000, source 77e9f5fe...,
+  DLL core_8721fd253db3a265.dll. At 50 ms, mean 50.58 -> 11.27 ms,
+  median 50.57 -> 5.03 ms, p95 50.80 -> 50.17 ms. Two differences in 382,
+  and both policies matched the reference on 381/382. Mean reference
+  gap 0.00024 -> 0.00088 points per position. At 750 ms, mean
+  750.61 -> 61.78 ms, median 750.59 -> 4.70 ms, p95 750.84 -> 613.42 ms.
+  All 90 bids identical and match the reference. Replayed the two earlier
+  50 ms misses and the revised rule matched the reference on both.
+  Files runs/bid_stop/probe_947335000.{meta,jsonl,json}. After the probe,
+  restored the existing BidAnalysis sample-metadata behavior. The measured
+  decisions and native stopping logic are unchanged.
+
+This measured bid latency and reference agreement. Realised game score,
+unseen-deal duel confirmation, and the benefit of reallocating saved time
+remain unmeasured. Bid draws share the simulator RNG with card play, so
+a duel that seeks to attribute effects to bid selection should also
+control card RNG and budgeting. No promotion.
+Final verification: 97 targeted tests passed. Full suite: 712 passed, with four previously recorded stale v2 default assertions failing.
+
+
+## Reverted bid stopping and checked forecast calibration (19 November 2026)
+
+User requested removal of adaptive bid stopping. Reverted the code and its
+tests, keeping the saved measurements as experiment history. The restored
+native core builds and 64 relevant tests pass. The earlier independent
+bid-estimator candidate and shortlist audit are retained.
+
+Read-only diagnostic of the existing holdout runs/value_bid/confirm_t10.jsonl.
+25,000 drawn rounds, seed starting 7100000, 10 ms, historical v2 lobby and
+standard weighted table sizes under bowers (see learned full-deal value
+entry). Reused the existing saved forecasts, outcomes and model weights.
+For each of 24,511 saved positions, selected the bid with highest expected
+points using the saved 50/50 simulation/network blend, then compared raw
+simulation and network forecasts for that same bid with the recorded
+outcome in a lobby playout. On 6,091 positions with 8-10 cards, simulation
+predicted 55.1% exact bids and network 55.0%, compared with 62.8% made.
+Simulation expected 2.479 tricks per hand, compared with 2.373 taken.
+Across all rows, simulation predicted 65.4% exact bids versus 68.8% made.
+Trick-count log loss (probability floor .001) simulation .867, network .803.
+Historical setup and one rollout per option limit transfer to today's bot.
+This diagnostic does not isolate hidden-deal sampling from the imagined
+bidders or card policies. No strategy change or strength gate.
+
+
+## Measured: bid forecasts with fixed deals and bids, varied card policy (19 November 2026)
+
+Diagnostic `ohhell.learn.bid_play_audit`. Baseline is the current game's
+native cheap card rollout and current shortlist. Two replacements use
+the current game hybrid card policy for only the bidder or all seats on
+non-random moves. The sampled kind-specific random-card probabilities
+are held fixed. All three use the same hidden hands, opponent kinds and
+locked bids (including dealer correction for each candidate bid). Earlier
+public bids are generated by the standard duel field (previous hybrid x3,
+skilled, casual). Bowers, standard weighted 3-8-player table draw and
+down/blind/up round weights. Blind and positions with only one shortlisted
+bid are skipped. No live wall-clock allowance: 128 deals per card and
+endgame choice in the hybrid branches. The live-reference branch uses
+the all-seat hybrid on 32 independent deals and fresh card seeds drawn
+from the same observation, sampler and imagined-bid process. Each
+forecast uses the other 32 deals. Recommended bids use the same network
+blend as the current bot. Raw probability metrics assess the rollouts.
+
+320 drawn positions, seed 947341000, 12 workers, 298 scored, 70 with 8-10
+cards. Source dee17e8e0dfe..., bid.npz a84e9315..., play.npz 8cb5a064...
+(full fingerprints in manifest). Smoke: 8 draws from seed 947340000,
+4 worlds per split, 32 card deals, 2 workers, 7 scored.
+
+Exact-bid probability bias (predicted minus reference), cheap / live
+bidder only / live all: -4.72 / +1.33 / -0.21 percentage points overall,
+and -10.21 / +2.95 / -0.31 on 8-10-card hands. All-live vs cheap Brier
+improvement 0.01066 +/- 0.00333 overall, 0.03163 +/- 0.01104 on long
+hands (paired approximate 95% margins across positions). Mean trick
+bias of the cheap rollout was only -0.012 tricks overall, so much of
+this discrepancy is distribution shape. All-live changes 52 of 298
+blended bid recommendations, bidder-only changes 43. Held-out modeled
+bid-choice score, weighted to the duel's game length: +2.71 +/- 5.62
+points/game for all-live and +0.86 +/- 5.49 for bidder-only vs cheap.
+Both include zero. No timed or realised strength gate. The reference
+is a simulated hybrid population sharing the same sampled worlds model,
+not independent human play. This isolates the effect of changing card
+play in that setup, but leaves sampling and imagined bids unvalidated.
+
+Saved runs/bid_play/audit_947341000.{meta,jsonl,json} and smoke_947340000.*
+in the same directory. Seven related bid-floor and value-bid tests pass.
+No change to the game bot.
+
+
+## Worse in a short duel: live hybrid card play inside bid rollouts (19 November 2026)
+
+`ohhell.learn.bid_play_duel`, fixed 800 pairs, seed 947351000, 8 workers.
+Same freshly dealt cards and opponents within each pair. Bowers,
+dealer restriction, standard weighted 3-8-player down/blind/up round
+draw, scores weighted by number of rounds per game. Field: previous
+hybrid x3 / skilled / casual. Both sides use current game hybrid
+`hybrid:field=mix,inference=1,shortlist=13,touching=1,bid_sigma=0.76,bid_blend=0.25`,
+250 ms wall-clock per bid, and the same 1,024-deal budgets and RNG stream
+for actual card play. All identical bids led to identical card sequences.
+Candidate replaces the cheap card rollout with the audited all-seat
+hybrid, 128 deals per simulated card/endgame choice, on non-random moves
+with the sampled kind's original noise. Uses the audit's 32-deal blocks
+and locked imagined bids, with existing shortlist and blend. Incomplete
+sampled worlds are discarded so each alternative gets the same complete
+worlds. If no world finishes before the deadline, the bid network
+supplies the choice. Fixed-size short screen with a plain paired 95%
+interval, no confirmation. No promotion.
+
+**-46.63 +/- 18.67 points per game**. 221 bids changed. Of 760 ordinary
+bids, median completed worlds 2 candidate vs 21,946.5 baseline. Mean bid
+times 245.85 / 251.27 ms. Network fallback on 66 positions. Median one
+candidate world on 8-10-card hands (205 pairs). Even among rows with
+at least one candidate world, the edge was -52.40 points/game
+(descriptive, post-selection). This tests the cost of using live search
+directly at equal time. The fixed-world audit had 32 worlds per forecast
+and found better calibration; equal-time sampling collapsed here.
+
+Source abc7744e74625299..., models bid a84e9315... / play 8cb5a064...
+(full fingerprints in manifest). Saved
+`runs/bid_play/duel_947351000.{meta,jsonl,json}`. Smoke 12 rounds at
+100 ms (seed 947350000, 3 workers), completed. Fourteen related tests passed.
+
+
+## Measured: cheap live-search bid calibration and compact card rollout (19 November 2026)
+
+Opt-in hybrid setting `bid_calibration_file=ohhell/models/bid_calibration_live.json`.
+Four fitted log-odds coefficients (intercept, scaled hand size, zero bid,
+and bid/hand-size) adjust the exact-bid probability of the native cheap
+rollout before the existing network blend. Other trick counts retain
+their relative proportions. Fitted on the 298 paired positions from
+seed 947341000 (saved live forecasts versus cheap odds). Same shortlist,
+cheap draws, opponent models and actual card play. Live reference
+uses 128 deals for its card/endgame choices. Correction costs about
+17 microseconds for three rows in a local microbenchmark; equal seed
+and fixed budget verified identical sample count and correct normalization.
+Model bfcfca4a63ea3cc5..., bid a84e9315..., play 8cb5a064...; hashes
+recorded by tournament/duel manifests. Source ce5199ebe6fae895....
+
+Fresh validation: 480 drawn positions, 447 scored (121 with 8-10
+cards), seed 947361000, 12 workers. Standard weighted 3-8-player
+down/blind/up, bowers, dealer restriction and duel field earlier bidders.
+Raw cheap forecast 4,096 worlds per bid, live reference 32 independently
+sampled worlds with the audit's 128 card/endgame budget. No wall-clock
+limit. Average exact-bid bias -4.65 -> -0.03 percentage points overall
+and -9.45 -> -0.62 for 8-10 cards. Brier change -0.00438 +/- 0.00110
+overall, modeled bid-choice edge **-0.74 +/- 2.96 points/game**, with
+32 recommendations changed. Earlier smoke: 8 draws (7 scored), seed
+947360000, 4 live worlds, 2 workers. Files
+runs/bid_play/calibration_947361000.{jsonl,json,meta} and calibration_smoke_947360000.*.
+
+Separate historical validation: saved outcomes for 24,511 v2 lobby
+positions at 10 ms from runs/value_bid/confirm_t10.jsonl (25,000 drawn
+from seed 7100000, historical v2 settings, 18 workers). Postprocessed
+both cheap forecast variants with the same 25% saved-network blend.
+Brier change -0.00255 +/- 0.00042, recorded bid-choice edge
+**-3.01 +/- 1.34 points/game**. Historical forecast/outcome policy
+differs from today's default. runs/bid_play/calibration_historical_holdout.json.
+Better absolute probability calibration did not imply better bid ranking.
+No duel or promotion. 79 relevant tests passed.
+
+Second cheap alternative screened without wiring a new policy into the
+game: existing compact `policy=learned_all` checkpoint ca5a1ab4...,
+trained on old v2 teacher, bid simulation only. Same 298 positions and
+saved live reference as the fixed-deal audit (seed 947341000), current
+game hybrid as baseline, 50 ms real bid allowance each, 8 workers,
+standard rules/field as in the audit. Median deals 108 learned vs 5,061
+cheap (mean 50.77 vs 50.25 ms). Brier .17119 vs .16082; modeled bid-choice
+edge **-15.93 +/- 7.23 points/game**. Files
+runs/bid_play/compact_rollout_probe.{py,json}. This rules out reusing
+this checkpoint unchanged for this purpose. No duel or promotion.
+
+
+## Screened: paired bid-score gap correction (19 November 2026)
+
+Opt-in `bid_rank_file=ohhell/models/bid_rank_paired.json` on the current
+game hybrid (field=mix, inference=1, shortlist=13, touching=1, bid_sigma=.76,
+bid_blend=.25). Ranker acts only on 8-10 card hands and among bids within
+6 expected points of the current best. Fits a regularized linear correction
+to points gaps rather than aggregate exact-bid probabilities. Eleven
+features from the hybrid trick odds, bid, hand size, table size and bidding
+position. Simulations, live card play and the existing probabilities are
+unaltered. Same RNG and 4,096 sampled draws verified with opt-in and base.
+
+Training: 3,200 round seeds from 947370000, 12 workers, 526 eligible
+positions and 620 paired bid comparisons. For each position, 4,096 cheap
+worlds supply baseline features. On 32 other shared worlds, locked opponent
+bids and noise, score each contender with cheap rollout and live hybrid
+card play (128 worlds per simulated card/endgame choice). Fit the difference
+between their blended score gaps with greater weight on nearly tied bids.
+Bowers, dealer restriction, standard weighted 3-8-player down/blind/up
+and duel field. Fixed deal counts, no wall-clock budget. Files
+runs/bid_rank/train_947370000.{jsonl,meta}; source 3ed033746dc8591f...;
+model 49a043f9c8a7623f..., bid a84e9315..., play 8cb5a064....
+
+Frozen model evaluation, no training on either file:
+- Current live-search reference, seed 947361000, 447 positions including
+  121 with 8-10 cards. 15 changes, all higher. -2.46 points per changed
+  hand. Overall edge **-1.73 +/- 2.44 points/game**. On long hands only,
+  game-length-scaled conditional edge -6.40 +/- 8.99.
+- Recorded historical v2 lobby outcomes, seeds from 7100000 as in historical
+  calibration validation, 24,511 positions including 6,091 long hands.
+  873 changes, all higher; -2.55 points per changed hand. Overall edge
+  **-1.87 +/- 1.11 points/game** with the same 25% saved network blend on
+  both sides. Different lobby and bot from the current setup.
+- Saved runs/bid_rank/{current_validation,historical_validation}.json.
+  75 relevant tests passed, including the new zero-weight invariant check.
+
+The fitted ranker inherited the upward shift despite changing the training
+objective to paired point gaps. Does not justify a duel or promotion.
+A future action-focused fit needs better labels for ranking close bids,
+especially realistic continuation outcomes and enough repeated deals per
+comparison to resolve small gaps.

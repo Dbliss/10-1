@@ -4,8 +4,9 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from .. import bid_calibration, bid_rank
 from ..cards import EFFECTIVE_SUIT, OUTRANKS, RANK_OF, cards_in
-from ..engine import NO_SUIT
+from ..engine import NO_BID, NO_SUIT
 from ..learn.models import load_models
 from .base import Bot
 from .heuristic import table_call
@@ -104,8 +105,15 @@ class HybridBot(SimulationBot):
                  bid_blend=0.5, inference=True, bid_models=None, play_models=None,
                  blend_pivot=0, cash=0, play_evidence=0, touching=0,
                  evaluator='mlp', bid_table=None, value_bids=None, value_share=1 / 3,
-                 value_playouts=1, value_play=None, value_play_mode='value', **kwargs):
+                 value_playouts=1, value_play=None, value_play_mode='value',
+                 bid_calibration_file=None, bid_rank_file=None, **kwargs):
         super().__init__(seed=seed, inference=inference, **kwargs)
+        if bid_calibration_file and value_bids:
+            raise ValueError('Bid calibration is fitted for cheap rollouts, not full-deal value models.')
+        if bid_rank_file and (bid_calibration_file or value_bids or self.confidence):
+            raise ValueError('Bid ranking expects the ordinary hybrid forecast.')
+        self.bid_calibration = bid_calibration.load_coefficients(bid_calibration_file) if bid_calibration_file else None
+        self.bid_rank = bid_rank.load_weights(bid_rank_file) if bid_rank_file else None
         self.value_net = None
         if value_bids:
             if self.simulator is None:
@@ -196,6 +204,12 @@ class HybridBot(SimulationBot):
         if self.value_net is not None:
             return self._analyse_bids_value(obs)
         simulated = super().analyse_bids(obs)
+        if self.bid_calibration is not None and not obs.blind:
+            adjusted = {bid: bid_calibration.adjust(dist, obs.hand_size, bid, self.bid_calibration)
+                        for bid, dist in simulated.distributions.items()}
+            score = obs.rules.scoring
+            simulated = BidAnalysis(adjusted, {bid: _expected(dist, bid, score)
+                                              for bid, dist in adjusted.items()}, simulated.samples)
         blend = self.bid_share(obs.hand_size, obs.n)
         if not blend:  # bids from the simulation alone
             return simulated
@@ -210,6 +224,13 @@ class HybridBot(SimulationBot):
         return BidAnalysis(distributions, {
             bid: _expected(dist, bid, score) for bid, dist in distributions.items()
         })
+
+    def bid(self, obs):
+        if self.bid_rank is None or obs.blind or obs.hand_size < bid_rank.MIN_HAND:
+            return super().bid(obs)
+        analysis = self.analyse_bids(obs)
+        return bid_rank.pick(analysis.values, analysis.distributions, obs.hand_size,
+                             obs.n, sum(b != NO_BID for b in obs.bids), self.bid_rank)
 
     def play(self, obs):
         cards = obs.legal_actions()

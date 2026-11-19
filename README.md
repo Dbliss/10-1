@@ -275,6 +275,14 @@ candidate better than the game's bot at this time?" much faster:
   Bots that remember earlier rounds (`typing=1`) need whole games, so use
   the tournament for those.
 
+Experimental `bid_estimate=3` uses the existing fitted v3 formula only for
+our own bid shortlist. Unlike `estimate=3`, it leaves imagined opponents,
+inference and network inputs unchanged. Default `bid_estimate=0` preserves
+existing behaviour. Run `.venv\Scripts\python.exe scripts/run_bid_estimate_experiment.py`
+for an unattended 50 ms screen, followed by 250 ms only if confirmed.
+Progress: <http://localhost:8781/>. Every completed duel is logged in
+`BOT_EXPERIMENTS.md`; the runner never changes the default bot.
+
 At 250 ms on 18 workers a duel runs about 6 rounds a second; a full plan of
 60,000 rounds takes under three hours and resolves about +/-2.5 points a
 game, against roughly 8 hours for a 1,300-set tournament at 50 ms.

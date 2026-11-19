@@ -106,7 +106,7 @@ class SimulationBot(HeuristicBot):
                  policy_temperature=10, controller='fixed', bank_capacity=4,
                  stop_z=0, stop_min=32, typing=0, native_required=0, reading='all',
                  card_budget=0, bid_budget=0, endgame_budget=0, endgame_noise=0,
-                 endgame_table=0):
+                 endgame_table=0, bid_estimate=0):
         super().__init__(seed, react=react, style=style)
         self.last_card_worlds = 0  # deals the last card evaluation counted
         if style_seats not in ('self', 'all'):
@@ -115,6 +115,12 @@ class SimulationBot(HeuristicBot):
         if estimate not in (1, 2, 3):
             raise ValueError('estimate must be 1, 2 or 3.')
         self.estimate = estimate
+        if bid_estimate not in (0, 1, 2, 3):
+            raise ValueError('bid_estimate must be 0, 1, 2 or 3.')
+        # An own-bid-only experiment: leave imagined bidders, belief sampling,
+        # rollout policies and the trained networks' inputs on `estimate`.
+        # Zero preserves the existing behaviour, including estimate=2/3 specs.
+        self.bid_estimate = bid_estimate
         self.time_limit = time_ms / 1000.0 if time_ms else None
         if sampler not in ('belief', 'uniform') or policy not in ('heuristic', 'learned_self', 'learned_all'):
             raise ValueError('Unknown sampler or rollout policy.')
@@ -268,11 +274,12 @@ class SimulationBot(HeuristicBot):
     def _bid_options(self, obs):
         """The current bot's heuristic shortlist, in legal bid order."""
         legal = obs.legal_actions()
-        if self.estimate >= 2:
+        version = self.bid_estimate or self.estimate
+        if version >= 2:
             position = estimate_v2.first_trick_position(obs.seat, obs.dealer, obs.n)
             estimate = estimate_v2.expected_tricks(
                 obs.hand, obs.trump_card, obs.n, obs.hand_size, position,
-                version=self.estimate)
+                version=version)
             low = max(estimate_v2.certain_tricks(obs.hand, obs.trump_card),
                       math.floor(estimate) - 1)
             high = min(obs.hand_size, math.ceil(estimate) + 2)
