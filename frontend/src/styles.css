@@ -140,6 +140,33 @@ img {
   width: 100%;
 }
 
+/* Every few seconds the hint button's outline flickers to draw the eye. */
+.btn-hint {
+  animation: hint-flicker 6s ease-in-out 2s infinite;
+}
+
+@keyframes hint-flicker {
+  0%, 84%, 100% {
+    border-color: var(--line);
+    box-shadow: none;
+  }
+  87%, 93% {
+    border-color: var(--brass);
+    box-shadow: 0 0 10px rgba(227, 189, 116, 0.55);
+  }
+  90% {
+    border-color: var(--gain);
+    box-shadow: 0 0 10px rgba(123, 232, 174, 0.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-hint {
+    animation: none;
+    border-color: rgba(227, 189, 116, 0.6);
+  }
+}
+
 /* Setup */
 
 .setup {

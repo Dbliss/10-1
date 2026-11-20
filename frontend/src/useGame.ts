@@ -8,17 +8,28 @@ const AUTO_ADVANCE_DELAY: Partial<Record<Awaiting, number>> = {
   collect_trick: 1600,
 };
 
+/**
+ * The shortest time each bot move stays on screen before the next one, so
+ * instant decisions still appear one at a time. The bot thinks during this
+ * time, so slower decisions are not delayed further.
+ */
+const BOT_MOVE_MIN_MS = 250;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export function useGame() {
   const [game, setGame] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const shownAt = useRef(0);
 
   const run = useCallback(async (action: () => Promise<GameState | null>) => {
     if (inFlight.current) return;
     inFlight.current = true;
     try {
       setGame(await action());
+      shownAt.current = performance.now();
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -35,7 +46,15 @@ export function useGame() {
     if (!game) return;
     const delay = AUTO_ADVANCE_DELAY[game.awaiting];
     if (delay === undefined) return;
-    const timer = setTimeout(() => run(api.advance), delay);
+    const step =
+      game.awaiting === "bot"
+        ? async () => {
+            const next = await api.advance();
+            await sleep(BOT_MOVE_MIN_MS - (performance.now() - shownAt.current));
+            return next;
+          }
+        : api.advance;
+    const timer = setTimeout(() => run(step), delay);
     return () => clearTimeout(timer);
   }, [game, run]);
 

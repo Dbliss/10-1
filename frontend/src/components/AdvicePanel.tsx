@@ -89,7 +89,7 @@ export function AdvicePanel({ game, autoAsk = false }: { game: GameState; autoAs
   return (
     <section className="advice" aria-live="polite">
       {advice === null ? (
-        <button type="button" className="btn btn-quiet btn-wide" onClick={ask} disabled={thinking}>
+        <button type="button" className={`btn btn-quiet btn-wide ${thinking ? "" : "btn-hint"}`} onClick={ask} disabled={thinking}>
           {thinking ? "Thinking…" : "Ask the bot"}
         </button>
       ) : advice.kind === "bid" ? (

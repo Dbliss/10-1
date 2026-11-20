@@ -88,7 +88,7 @@ export function GameScreen({
         Scores
       </button>
       {yourTurn && (
-        <button type="button" className="btn btn-quiet btn-small" onClick={() => setSheet("advice")}>
+        <button type="button" className="btn btn-quiet btn-small btn-hint" onClick={() => setSheet("advice")}>
           Hint
         </button>
       )}
