@@ -47,9 +47,9 @@ export function SetupScreen({ onStart }: { onStart: (players: number, handSize: 
         ))}
       </div>
 
-      <h1>Oh Hell</h1>
+      <h1>10-to-1</h1>
       <p className="setup-lede">
-        Call exactly how many tricks you&rsquo;ll take. Then take exactly that many.
+        Can you beat the bots?
       </p>
 
       <ChoiceRow label="Players" options={PLAYER_COUNTS} value={players} onChange={setPlayers} />
@@ -63,14 +63,6 @@ export function SetupScreen({ onStart }: { onStart: (players: number, handSize: 
       <button type="button" className="btn btn-primary btn-wide" onClick={() => onStart(players, handSize)}>
         Deal {handSize} {handSize === 1 ? "card" : "cards"}
       </button>
-
-      <p className="setup-rules">
-        Deal down to one, then a blind round with one hidden card each, then back up to your
-        starting hand. Scores carry through all {2 * handSize + 1} rounds.
-        Must follow suit; trumps beat everything else. The Jack of trumps is highest, then the
-        other Jack of the same colour, which counts as a trump. Make your bid for 10 points per trick
-        (a made zero scores 10). Miss it and lose 10 points for every trick you were off.
-      </p>
     </main>
   );
 }

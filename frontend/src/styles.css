@@ -251,11 +251,6 @@ img {
   color: var(--brass-ink);
 }
 
-.setup-rules {
-  color: var(--muted);
-  font-size: 14px;
-}
-
 /* Game layout */
 
 .game {

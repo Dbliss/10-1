@@ -101,7 +101,7 @@ export function GameScreen({
         className={`topbar ${compact ? "topbar-auto" : ""} ${headerShown ? "topbar-shown" : ""}`}
         onPointerDown={compact ? revealHeader : undefined}
       >
-        <span className="brand">Oh Hell</span>
+        <span className="brand">10-to-1</span>
         <RoundPips game={game} />
         <span className="round-compact">
           Round {game.round}/{game.total_rounds}
