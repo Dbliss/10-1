@@ -1,6 +1,25 @@
 # Bot experiment history
 
-Updated 19 November 2026. This is the durable record for future agents.
+Updated 20 November 2026. This is the durable record for future agents.
+
+## Promoted without tournament: v4 one-card ranges (20 November 2026)
+
+**User's decision; no main gate or confirmation was run.** v4 =
+`ranges:field=previous,inference=0,time_ms=2`: v3 with visible one-card bids
+(not blind 0) replaced by the exact range reading in `ohhell/bots/ranges.py`
+(see "Prepared candidate: one-card bids read as card ranges", 12 November).
+All larger hands, blind bids and card play are v3's. Game bots and the hint
+advisor inherit it through `DEFAULT_SPEC` plus `Game.LONG_THINK`.
+
+- Table `ohhell/models/one_card_ranges.json` unchanged, SHA-256
+  6d8435ab71d4cc14513d4dd8207bca10058840f31de46eedfa0c59f2b57bd470.
+- Example (8 players, 10 of hearts turned, holding 7 of hearts, three earlier
+  zero bids): win chance 46.6%, so the rule bids 0. Seven cards beat it with
+  bowers (J hearts, J diamonds, A, K, Q, 9, 8 of hearts).
+- Only evidence: the 12 November arena smoke check against v2 (+0.2 to +0.5
+  points per game over one-card rounds only). Missing: tournament against v3,
+  confirmation on unseen deals, any test run of this change (user said no
+  testing needed).
 
 ## Prepared: own-bid-only fitted formula (19 November 2026)
 
