@@ -30,6 +30,11 @@ VERSIONS = (
     # unweighted deals scored better. Passed main (+5.30 +/- 4.48) and
     # confirmation (+5.18 +/- 3.03) on 16 November 2026. Measured at 2 ms only.
     Version(3, 'No reading', 'hybrid:field=previous,inference=0,time_ms=2'),
+    # v3 with visible one-card bids read from earlier bids as exact card
+    # ranges (ohhell/bots/ranges.py); all other bids and play are v3's.
+    # Promoted at the user's request on 20 November 2026 without a
+    # tournament; see BOT_EXPERIMENTS.md.
+    Version(4, 'One-card ranges', 'ranges:field=previous,inference=0,time_ms=2'),
 )
 DEFAULT_SPEC = VERSIONS[-1].spec
 
