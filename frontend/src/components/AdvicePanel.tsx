@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { cardName } from "../cards";
 import type { Advice, GameState } from "../types";
@@ -50,32 +50,41 @@ function CardRows({ advice }: { advice: Extract<Advice, { kind: "card" }> }) {
 }
 
 /** Shows the bot's own analysis of the decision the user is facing. */
-export function AdvicePanel({ game }: { game: GameState }) {
+export function AdvicePanel({ game, autoAsk = false }: { game: GameState; autoAsk?: boolean }) {
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const yourTurn = game.awaiting === "user_bid" || game.awaiting === "user_play";
   const decision = `${game.round}-${game.awaiting}-${game.hand.length}-${game.trick.length}`;
+  // Answers that arrive after the decision has moved on are dropped.
+  const current = useRef(decision);
+  current.current = decision;
+  const asked = useRef<string | null>(null);
+
+  const ask = useCallback(async () => {
+    const askedFor = current.current;
+    asked.current = askedFor;
+    setThinking(true);
+    setError(null);
+    try {
+      const answer = await api.advice();
+      if (current.current === askedFor) setAdvice(answer);
+    } catch (err) {
+      if (current.current === askedFor)
+        setError(err instanceof Error ? err.message : "The bot couldn't answer.");
+    } finally {
+      if (asked.current === askedFor) setThinking(false);
+    }
+  }, []);
 
   useEffect(() => {
     setAdvice(null);
     setError(null);
-  }, [decision]);
+    if (autoAsk && yourTurn && asked.current !== decision) ask();
+  }, [decision, autoAsk, yourTurn, ask]);
 
   if (!yourTurn) return null;
-
-  const ask = async () => {
-    setThinking(true);
-    setError(null);
-    try {
-      setAdvice(await api.advice());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "The bot couldn't answer.");
-    } finally {
-      setThinking(false);
-    }
-  };
 
   return (
     <section className="advice" aria-live="polite">

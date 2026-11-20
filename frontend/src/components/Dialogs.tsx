@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { motion } from "motion/react";
 import type { GameReview, GameState } from "../types";
 import { ReviewTeaser } from "./GameReview";
@@ -17,6 +17,45 @@ function Dialog({ title, children }: { title: string; children: ReactNode }) {
         <h2>{title}</h2>
         {children}
       </motion.div>
+    </motion.div>
+  );
+}
+
+/** A panel that slides up from the bottom of a small screen. Wrap in AnimatePresence. */
+export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      className="sheet-backdrop"
+      onClick={onClose}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.section
+        className="sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", stiffness: 420, damping: 40 }}
+      >
+        <header className="sheet-head">
+          <h2>{title}</h2>
+          <button type="button" className="btn btn-quiet" onClick={onClose} autoFocus>
+            Close
+          </button>
+        </header>
+        <div className="sheet-body">{children}</div>
+      </motion.section>
     </motion.div>
   );
 }

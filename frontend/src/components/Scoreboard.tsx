@@ -15,7 +15,7 @@ function ResultCell({ result }: { result: RoundResult }) {
   );
 }
 
-export function Scoreboard({ game }: { game: GameState }) {
+export function Scoreboard({ game, heading = true }: { game: GameState; heading?: boolean }) {
   const rounds = Array.from({ length: game.total_rounds }, (_, i) => i + 1);
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -33,7 +33,7 @@ export function Scoreboard({ game }: { game: GameState }) {
 
   return (
     <section className="scoreboard" aria-label="Scoreboard">
-      <h2>Scores</h2>
+      {heading && <h2>Scores</h2>}
       <div className="scoreboard-scroll" ref={scroller}>
         <table>
           <thead>

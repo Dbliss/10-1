@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { AnimatePresence } from "motion/react";
 import type { GameState } from "../types";
+import { useMediaQuery, useRevealOnScrollUp } from "../useMediaQuery";
 import { AdvicePanel } from "./AdvicePanel";
-import { GameOverDialog, RoundSummaryDialog } from "./Dialogs";
+import { GameOverDialog, RoundSummaryDialog, Sheet } from "./Dialogs";
 import { GameReviewScreen, useReview } from "./GameReview";
 import { Hand } from "./Hand";
 import { Scoreboard } from "./Scoreboard";
@@ -69,9 +71,36 @@ export function GameScreen({
     if (!over) setReviewing(false);
   }, [over]);
 
+  // Below this width the sidebar no longer fits: everything must fit on one
+  // screen, so scores and advice move into sheets behind buttons.
+  const compact = useMediaQuery("(max-width: 1040px)");
+  const [headerShown, revealHeader] = useRevealOnScrollUp(compact);
+  const [sheet, setSheet] = useState<"scores" | "advice" | null>(null);
+  const yourTurn = game.awaiting === "user_bid" || game.awaiting === "user_play";
+
+  useEffect(() => {
+    if (!compact || (!yourTurn && sheet === "advice")) setSheet(null);
+  }, [compact, yourTurn, sheet]);
+
+  const sheetActions = compact && (
+    <>
+      <button type="button" className="btn btn-quiet btn-small" onClick={() => setSheet("scores")}>
+        Scores
+      </button>
+      {yourTurn && (
+        <button type="button" className="btn btn-quiet btn-small" onClick={() => setSheet("advice")}>
+          Hint
+        </button>
+      )}
+    </>
+  );
+
   return (
-    <div className="game">
-      <header className="topbar">
+    <div className={`game ${compact ? "game-compact" : ""}`}>
+      <header
+        className={`topbar ${compact ? "topbar-auto" : ""} ${headerShown ? "topbar-shown" : ""}`}
+        onPointerDown={compact ? revealHeader : undefined}
+      >
         <span className="brand">Oh Hell</span>
         <RoundPips game={game} />
         <span className="round-compact">
@@ -81,15 +110,30 @@ export function GameScreen({
       </header>
 
       <main className="play">
-        <StatusBar game={game} />
+        <StatusBar game={game} actions={sheetActions} />
         <Table game={game} onBid={onBid} />
         <Hand game={game} onPlay={onPlay} />
       </main>
 
-      <aside className="sidebar">
-        <AdvicePanel game={game} />
-        <Scoreboard game={game} />
-      </aside>
+      {!compact && (
+        <aside className="sidebar">
+          <AdvicePanel game={game} />
+          <Scoreboard game={game} />
+        </aside>
+      )}
+
+      <AnimatePresence>
+        {sheet === "scores" && (
+          <Sheet key="scores" title="Scores" onClose={() => setSheet(null)}>
+            <Scoreboard game={game} heading={false} />
+          </Sheet>
+        )}
+        {sheet === "advice" && (
+          <Sheet key="advice" title="Bot's advice" onClose={() => setSheet(null)}>
+            <AdvicePanel game={game} autoAsk />
+          </Sheet>
+        )}
+      </AnimatePresence>
 
       {game.phase === "round_over" && <RoundSummaryDialog game={game} onNext={onNextRound} />}
       {over && !reviewing && (

@@ -448,7 +448,7 @@ img {
   font-variant-numeric: tabular-nums;
 }
 
-.seat-bid span {
+.seat-bid > span {
   display: inline-block;
 }
 
@@ -819,37 +819,206 @@ img {
   transform: translateX(-50%);
 }
 
-/* Narrow screens */
+/* Compact layout (tablets and phones): one screen, no scrolling */
 
-@media (max-width: 1040px) {
-  .game {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto;
-    grid-template-areas:
-      "top"
-      "play"
-      "side";
-    height: auto;
-    min-height: 100dvh;
-  }
-
-  .play {
-    min-height: min(100dvh, 760px);
-  }
-
-  .table-wrap {
-    flex: 1 0 400px;
-  }
-
-  .sidebar {
-    padding: 0 16px 16px;
-    overflow: visible;
-  }
-
-  .scoreboard-scroll {
-    overflow: visible;
-  }
+.btn-small {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 13px;
 }
+
+html:has(.game-compact),
+html:has(.game-compact) body {
+  /* Stop pull-to-refresh hijacking the swipe that reveals the header. */
+  overscroll-behavior-y: none;
+}
+
+.game-compact {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.topbar-auto {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 80;
+  padding-top: max(10px, env(safe-area-inset-top));
+  background: rgba(8, 20, 48, 0.94);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  transform: translateY(-100%);
+  transition: transform 0.25s ease;
+}
+
+.topbar-auto.topbar-shown,
+.topbar-auto:focus-within {
+  transform: none;
+}
+
+.game-compact .play {
+  flex: 1;
+  min-height: 0;
+  padding: max(8px, env(safe-area-inset-top)) 12px max(6px, env(safe-area-inset-bottom));
+}
+
+.game-compact .status {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "trump tally actions"
+    "message message message";
+  gap: 6px 10px;
+  min-height: 0;
+  margin-bottom: 8px;
+}
+
+.game-compact .trump {
+  grid-area: trump;
+  gap: 8px;
+}
+
+.game-compact .trump-card {
+  width: 34px;
+  border-radius: 3px;
+}
+
+.game-compact .trump strong {
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.game-compact .label {
+  font-size: 11px;
+}
+
+.game-compact .tally {
+  grid-area: tally;
+  min-width: 0;
+  font-size: 13px;
+  text-align: center;
+}
+
+.status-actions {
+  grid-area: actions;
+  display: flex;
+  gap: 6px;
+}
+
+.game-compact .status-message {
+  grid-area: message;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.game-compact .table-wrap {
+  padding: 0;
+}
+
+.game-compact .hand {
+  --hand-w: clamp(52px, min(22vw, 14dvh), 100px);
+  margin-top: 4px;
+  padding-top: 16px;
+  /* Room for the raised playable cards above and the fan's arch below. */
+  height: calc(var(--hand-w) * var(--card-ratio) + 44px);
+}
+
+/* Portrait felt: opponents on the upper arc, bids in the lower half. */
+
+.felt-arc {
+  border-radius: 46% / 30%;
+}
+
+.felt-arc .bid-panel {
+  top: 70%;
+  width: 92%;
+  margin-left: -46%;
+  padding: 10px 8px 12px;
+}
+
+.felt-arc .bid-panel h2 {
+  margin-bottom: 8px;
+  font-size: 17px;
+}
+
+.felt-arc .bid-options {
+  gap: 6px;
+}
+
+.felt-arc .bid-option {
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+
+.seat-bid-short {
+  display: none;
+}
+
+/* The bid panel sits over your own seat on a portrait felt. */
+.seat-you {
+  transition: opacity 0.2s;
+}
+
+.felt-arc.felt-bidding .seat-you {
+  opacity: 0;
+}
+
+/* Sheets */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(4, 10, 26, 0.6);
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 85dvh;
+  padding: 12px 16px max(16px, env(safe-area-inset-bottom));
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.sheet-head h2 {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.sheet-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sheet .scoreboard {
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+/* Phones */
 
 @media (max-width: 720px) {
   .pips {
@@ -860,71 +1029,90 @@ img {
     display: inline;
   }
 
-  .status {
-    grid-template-columns: auto 1fr;
-    grid-template-areas:
-      "trump tally"
-      "message message";
-    gap: 8px 12px;
-  }
-
-  .trump {
-    grid-area: trump;
-  }
-
-  .trump-card {
-    width: 56px;
-  }
-
-  .tally {
-    grid-area: tally;
-  }
-
-  .status-message {
-    grid-area: message;
-    font-size: 18px;
-  }
-
-  .table-wrap {
-    padding: 0;
-  }
-
-  .felt {
-    border-radius: 110px;
-  }
-
   .seat {
-    width: 88px;
+    width: 66px;
+    gap: 2px;
   }
 
   .seat-plate {
-    padding: 4px 6px;
+    padding: 3px 5px;
+    border-radius: 6px;
   }
 
   .seat-head {
-    font-size: 12px;
-    gap: 4px;
+    gap: 3px;
+    font-size: 11px;
   }
 
   .seat-bid {
     font-size: 11px;
+    white-space: nowrap;
   }
 
-  .bid-panel {
-    width: 56%;
-    margin-left: -28%;
-    padding: 8px;
+  .seat-bid-long {
+    display: none;
   }
 
-  .bid-panel h2 {
-    margin-bottom: 6px;
-    font-size: 17px;
+  .seat-bid-short {
+    display: inline;
   }
 
-  .bid-option {
-    width: 36px;
-    height: 36px;
+  .dealer-chip {
+    width: 14px;
+    height: 14px;
+    font-size: 9px;
+  }
+
+  .seat-cards {
+    height: 15px;
+  }
+
+  .mini-back {
+    width: 10px;
+    height: 15px;
+    border-radius: 2px;
+  }
+
+  .mini-back + .mini-back {
+    margin-left: -6px;
+  }
+
+  .felt {
+    border-width: 5px;
+  }
+
+  .game-compact {
+    --trick-w: clamp(44px, min(15vw, 9.5dvh), 72px);
+  }
+
+  .bid-note {
+    font-size: 11px;
+  }
+}
+
+/* Landscape phones: very little height to spare. */
+@media (max-height: 520px) {
+  .game-compact .status {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "trump message tally actions";
+    margin-bottom: 4px;
+  }
+
+  .game-compact .trump-card {
+    width: 26px;
+  }
+
+  .game-compact .status-message {
     font-size: 15px;
+  }
+
+  .game-compact .hand {
+    --hand-w: clamp(44px, 17dvh, 80px);
+    padding-top: 14px;
+  }
+
+  .game-compact {
+    --trick-w: clamp(40px, 12dvh, 60px);
   }
 }
 

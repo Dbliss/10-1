@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { cardImage, cardName, isRed, SUIT_GLYPH } from "../cards";
 import type { GameState } from "../types";
 
@@ -34,7 +35,7 @@ function bidSummary(game: GameState): string {
     : `${total} bid, ${game.hand_size - total} under`;
 }
 
-export function StatusBar({ game }: { game: GameState }) {
+export function StatusBar({ game, actions }: { game: GameState; actions?: ReactNode }) {
   const { trump } = game;
   const yourTurn = game.awaiting === "user_bid" || game.awaiting === "user_play";
 
@@ -62,6 +63,8 @@ export function StatusBar({ game }: { game: GameState }) {
         </span>
         <strong>{bidSummary(game)}</strong>
       </div>
+
+      {actions && <div className="status-actions">{actions}</div>}
     </div>
   );
 }

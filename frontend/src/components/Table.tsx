@@ -3,8 +3,21 @@ import { AnimatePresence, motion } from "motion/react";
 import { cardImage, cardName } from "../cards";
 import type { GameState, Player } from "../types";
 
-/** Seat 0 (the user) sits at the bottom; turn order runs clockwise from there. */
-const seatAngle = (seat: number, seats: number) => Math.PI / 2 + (seat * 2 * Math.PI) / seats;
+/**
+ * Seat 0 (the user) sits at the bottom; turn order runs clockwise from there.
+ * On a narrow (portrait) felt the opponents share the upper arc instead of
+ * the full circle, which keeps the lower half clear for the bid panel.
+ */
+function seatAngle(seat: number, seats: number, arc: boolean) {
+  if (!arc || seat === 0) return Math.PI / 2 + (seat * 2 * Math.PI) / seats;
+  const opponents = seats - 1;
+  if (opponents === 1) return 1.5 * Math.PI;
+  const span = Math.min(160, 80 * (opponents - 1));
+  return ((270 - span / 2 + ((seat - 1) * span) / (opponents - 1)) * Math.PI) / 180;
+}
+
+/** Felts narrower than this use the portrait arc layout. */
+const ARC_BELOW = 560;
 
 function useElementSize() {
   const ref = useRef<HTMLDivElement>(null);
@@ -12,9 +25,9 @@ function useElementSize() {
 
   useLayoutEffect(() => {
     const element = ref.current!;
-    const observer = new ResizeObserver(() =>
-      setSize({ width: element.clientWidth, height: element.clientHeight }),
-    );
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -22,8 +35,15 @@ function useElementSize() {
   return [ref, size] as const;
 }
 
-function SeatPlate({ player, seat, game }: { player: Player; seat: number; game: GameState }) {
-  const angle = seatAngle(seat, game.players.length);
+interface SeatProps {
+  player: Player;
+  seat: number;
+  game: GameState;
+  arc: boolean;
+}
+
+function SeatPlate({ player, seat, game, arc }: SeatProps) {
+  const angle = seatAngle(seat, game.players.length, arc);
   const isActive = game.current_player === seat;
   const isDealer = game.dealer === seat;
   const isWinner = game.trick_winner === seat;
@@ -36,7 +56,7 @@ function SeatPlate({ player, seat, game }: { player: Player; seat: number; game:
 
   return (
     <div
-      className={`seat ${isActive ? "seat-active" : ""} ${isWinner ? "seat-winner" : ""}`}
+      className={`seat ${seat === 0 ? "seat-you" : ""} ${isActive ? "seat-active" : ""} ${isWinner ? "seat-winner" : ""}`}
       style={{
         left: `${50 + Math.cos(angle) * 42}%`,
         top: `${50 + Math.sin(angle) * 40}%`,
@@ -61,16 +81,26 @@ function SeatPlate({ player, seat, game }: { player: Player; seat: number; game:
         </div>
         <div className={`seat-bid ${bidTone}`}>
           {player.bid === null ? (
-            <span className="seat-bid-empty">No bid yet</span>
+            <span className="seat-bid-empty">
+              <span className="seat-bid-long">No bid yet</span>
+              <span className="seat-bid-short">Bidding…</span>
+            </span>
           ) : (
             <motion.span
               key={player.bid}
               initial={{ scale: 1.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
             >
-              {game.phase === "bidding"
-                ? `Bid ${player.bid}`
-                : `Won ${player.tricks_won} of ${player.bid}`}
+              {game.phase === "bidding" ? (
+                `Bid ${player.bid}`
+              ) : (
+                <>
+                  Won {player.tricks_won}
+                  <span className="seat-bid-long"> of </span>
+                  <span className="seat-bid-short">/</span>
+                  {player.bid}
+                </>
+              )}
             </motion.span>
           )}
         </div>
@@ -79,7 +109,14 @@ function SeatPlate({ player, seat, game }: { player: Player; seat: number; game:
   );
 }
 
-function TrickCards({ game, width, height }: { game: GameState; width: number; height: number }) {
+interface TrickProps {
+  game: GameState;
+  width: number;
+  height: number;
+  arc: boolean;
+}
+
+function TrickCards({ game, width, height, arc }: TrickProps) {
   const seats = game.players.length;
 
   // Once a trick is collected the winner is cleared, but its cards still need
@@ -88,7 +125,7 @@ function TrickCards({ game, width, height }: { game: GameState; width: number; h
   if (game.trick_winner !== null) lastWinner.current = game.trick_winner;
 
   const seatPoint = (seat: number) => {
-    const angle = seatAngle(seat, seats);
+    const angle = seatAngle(seat, seats, arc);
     return { x: Math.cos(angle) * width * 0.42, y: Math.sin(angle) * height * 0.4 };
   };
   const collectTo = seatPoint(lastWinner.current);
@@ -96,7 +133,7 @@ function TrickCards({ game, width, height }: { game: GameState; width: number; h
   return (
     <AnimatePresence custom={collectTo}>
       {game.trick.map(({ seat, card }, order) => {
-        const angle = seatAngle(seat, seats);
+        const angle = seatAngle(seat, seats, arc);
         const from = seatPoint(seat);
         const isWinner = game.trick_winner === seat;
         return (
@@ -107,7 +144,7 @@ function TrickCards({ game, width, height }: { game: GameState; width: number; h
             custom={collectTo}
             initial={{ x: from.x, y: from.y, scale: 0.7, opacity: 0 }}
             animate={{
-              x: Math.cos(angle) * Math.min(width * 0.14, 118),
+              x: Math.cos(angle) * Math.min(width * (arc ? 0.2 : 0.14), 118),
               y: Math.sin(angle) * Math.min(height * 0.17, 74),
               scale: isWinner ? 1.08 : 1,
               rotate: ((seat * 37) % 11) - 5,
@@ -170,14 +207,18 @@ function BidPanel({ game, onBid }: { game: GameState; onBid: (bid: number) => vo
 
 export function Table({ game, onBid }: { game: GameState; onBid: (bid: number) => void }) {
   const [ref, { width, height }] = useElementSize();
+  const arc = width > 0 && width < ARC_BELOW;
 
   return (
     <div className="table-wrap">
-      <div className="felt" ref={ref}>
+      <div
+        className={`felt ${arc ? "felt-arc" : ""} ${game.awaiting === "user_bid" ? "felt-bidding" : ""}`}
+        ref={ref}
+      >
         {game.players.map((player, seat) => (
-          <SeatPlate key={player.name} player={player} seat={seat} game={game} />
+          <SeatPlate key={player.name} player={player} seat={seat} game={game} arc={arc} />
         ))}
-        <TrickCards game={game} width={width} height={height} />
+        <TrickCards game={game} width={width} height={height} arc={arc} />
         <AnimatePresence>
           {game.awaiting === "user_bid" && <BidPanel key="bid" game={game} onBid={onBid} />}
         </AnimatePresence>
