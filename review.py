@@ -18,18 +18,25 @@ from ohhell.bots import make_bot
 from ohhell.cards import card_id
 from ohhell.engine import BIDDING
 
-# (name, the largest loss in expected points it covers), best to worst.
+# (name, the largest loss in expected points it covers), best to worst. A
+# missed bid swings about 20 points, so a 1-point loss is roughly a 5% higher
+# chance of missing. Best stays at 0.25 because the advisor's own estimates
+# vary by about that much.
 GRADES = [
     ('best', 0.25),
-    ('excellent', 1.0),
-    ('good', 2.0),
-    ('inaccuracy', 4.0),
-    ('mistake', 8.0),
+    ('excellent', 0.5),
+    ('good', 1.0),
+    ('inaccuracy', 2.5),
+    ('mistake', 5.0),
     ('blunder', math.inf),
 ]
 # Accuracy for one decision is 100 * exp(-loss / ACCURACY_SCALE): a 1-point
-# loss scores 82%, a 4-point inaccuracy 45%, an 8-point blunder 20%.
-ACCURACY_SCALE = 5.0
+# loss scores 67%, a 2.5-point inaccuracy 37%, a 5-point mistake 14%.
+ACCURACY_SCALE = 2.5
+# Accuracy counts only decisions whose best and worst options differ by more
+# than this, so near-equal choices (which low card to throw) don't pad it.
+# A game with no such decision falls back to counting them all.
+CONTESTED_SPREAD = 0.5
 
 
 def grade(loss):
@@ -123,6 +130,7 @@ class GameReview:
             options = sorted(values, key=lambda option: -values[option])
             moves.append({
                 'index': index,
+                'contested': values[best] - min(values.values()) > CONTESTED_SPREAD,
                 'kind': 'bid' if is_bid else 'card',
                 **decision['context'],
                 'choice': choice if is_bid else card_id(choice),
@@ -144,8 +152,9 @@ class GameReview:
         def summary(kind=None):
             chosen = [m for m in moves if kind is None or m['kind'] == kind]
             losses = [m['loss'] for m in chosen]
+            contested = [m['loss'] for m in chosen if m['contested']]
             return {
-                'accuracy': accuracy(losses),
+                'accuracy': accuracy(contested or losses),
                 'decisions': len(chosen),
                 'points_lost': round(sum(losses), 1),
                 'grades': {name: sum(m['grade'] == name for m in chosen) for name, _ in GRADES},
